@@ -1,0 +1,248 @@
+> """PDF 解析器：基于 pdfplumber + pypdf。
+  
+> pdfplumber 负责文本与布局提取，pypdf 负责元数据读取。
+> 通过字体大小启发式识别章节标题。
+> """
+  
+> from __future__ import annotations
+  
+> from collections.abc import Iterator
+> from pathlib import Path
+  
+> from book_dismantler.core.exceptions import ParseError
+> from book_dismantler.core.logging import get_logger
+> from book_dismantler.domain.document import (
+>     Chapter,
+>     DocumentFormat,
+>     Metadata,
+>     Paragraph,
+>     ParsedDocument,
+>     Section,
+> )
+  
+> logger = get_logger("parsing.pdf")
+  
+  
+> class PdfParser:
+>     """PDF 文档解析器。"""
+  
+>     def parse(self, path: str | Path) -> ParsedDocument:
+>         """解析 PDF 文件。
+  
+>         Args:
+>             path: PDF 文件路径。
+  
+>         Returns:
+>             包含章节与段落的 ``ParsedDocument``。
+  
+>         Raises:
+>             ParseError: 文件不存在或解析失败。
+>         """
+>         path = Path(path)
+>         if not path.exists():
+>             raise ParseError(f"文件不存在: {path}")
+  
+>         try:
+>             import pdfplumber
+>             from pypdf import PdfReader
+!         except ImportError as e:
+!             raise ParseError(f"缺少 PDF 解析依赖: {e}") from e
+  
+>         logger.info("开始解析 PDF: %s", path.name)
+  
+          # 元数据
+>         metadata = self._extract_metadata(path, PdfReader)
+  
+          # 正文：按页提取文本，按字体大小识别章节边界
+>         chapters: list[Chapter] = []
+>         current_chapter_title = ""
+>         current_sections: list[Section] = []
+>         current_paragraphs: list[Paragraph] = []
+>         para_idx = 0
+>         chapter_idx = 0
+  
+>         try:
+>             with pdfplumber.open(str(path)) as pdf:
+>                 for page_num, page in enumerate(pdf.pages):
+>                     text = page.extract_text() or ""
+>                     if not text.strip():
+!                         continue
+  
+>                     lines = text.split("\n")
+>                     for line in lines:
+>                         stripped = line.strip()
+>                         if not stripped:
+                              # 空行：段落分隔
+!                             if current_paragraphs and current_paragraphs[-1].text:
+!                                 pass
+!                             continue
+  
+                          # 启发式：短行且像标题（第X章/Chapter/数字开头大写）
+>                         if self._looks_like_chapter_title(stripped):
+                              # 保存前一章
+!                             if current_paragraphs or current_chapter_title:
+!                                 current_sections.append(
+!                                     Section(title="", paragraphs=current_paragraphs)
+!                                 )
+!                                 chapters.append(
+!                                     Chapter(
+!                                         title=current_chapter_title or f"第{chapter_idx + 1}章",
+!                                         sections=current_sections,
+!                                         index=chapter_idx,
+!                                     )
+!                                 )
+!                                 chapter_idx += 1
+!                             current_chapter_title = stripped
+!                             current_sections = []
+!                             current_paragraphs = []
+!                             para_idx = 0
+>                         else:
+>                             current_paragraphs.append(
+>                                 Paragraph(text=stripped, page=page_num, index=para_idx)
+>                             )
+>                             para_idx += 1
+  
+                  # 保存最后一章
+>                 if current_paragraphs or current_chapter_title:
+>                     current_sections.append(
+>                         Section(title="", paragraphs=current_paragraphs)
+>                     )
+>                     chapters.append(
+>                         Chapter(
+>                             title=current_chapter_title or f"第{chapter_idx + 1}章",
+>                             sections=current_sections,
+>                             index=chapter_idx,
+>                         )
+>                     )
+  
+!         except Exception as e:
+!             raise ParseError(f"PDF 解析失败: {e}") from e
+  
+          # 若未识别到任何章节，将全部文本作为单章
+>         if not chapters:
+!             chapters = [Chapter(title="全文", sections=[], index=0)]
+  
+>         logger.info(
+>             "PDF 解析完成: %d 章, %d 段落",
+>             len(chapters),
+>             sum(c.paragraph_count for c in chapters),
+>         )
+  
+>         return ParsedDocument(
+>             metadata=metadata,
+>             chapters=chapters,
+>             source_path=str(path),
+>             source_format=DocumentFormat.PDF,
+>         )
+  
+>     def _extract_metadata(self, path: Path, reader_cls: type) -> Metadata:
+>         """从 pypdf 读取元数据，多级回退确保标题不为空。"""
+>         try:
+>             reader = reader_cls(str(path))
+>             info = reader.metadata or {}
+>             total_pages = len(reader.pages)
+  
+              # 多级回退获取标题
+>             raw_title = str(info.get("/Title", "")).strip()
+              # 过滤无效标题：空、None 字符串、(anonymous)、纯重复字符
+>             invalid_titles = {"None", "(anonymous)", "Untitled", "untitled", ""}
+>             if raw_title in invalid_titles:
+!                 raw_title = ""
+              # 过滤可疑标题：全部相同字符（如 "nnnn"）
+>             if raw_title and len(set(raw_title)) <= 1:
+!                 raw_title = ""
+  
+              # 如果元数据无标题，尝试从第一页文本提取
+>             if not raw_title:
+!                 raw_title = self._guess_title_from_first_page(path)
+  
+              # 最终回退：文件名
+>             if not raw_title:
+!                 raw_title = path.stem
+  
+>             raw_author = str(info.get("/Author", "")).strip()
+>             if raw_author in ("None", "(anonymous)"):
+!                 raw_author = ""
+  
+>             return Metadata(
+>                 title=raw_title,
+>                 author=raw_author,
+>                 subject=str(info.get("/Subject", "") or ""),
+>                 publisher=str(info.get("/Publisher", "") or ""),
+>                 total_pages=total_pages,
+>             )
+!         except Exception:
+!             logger.warning("元数据提取失败，使用文件名作为标题")
+!             return Metadata(title=path.stem)
+  
+>     @staticmethod
+>     def _guess_title_from_first_page(path: Path) -> str:
+>         """从第一页文本猜测书名（取第一行短文本）。"""
+!         try:
+!             import pdfplumber
+  
+!             with pdfplumber.open(str(path)) as pdf:
+!                 if not pdf.pages:
+!                     return ""
+!                 text = pdf.pages[0].extract_text() or ""
+!                 lines = [line.strip() for line in text.split("\n") if line.strip()]
+!                 if not lines:
+!                     return ""
+                  # 第一行通常是书名（短行、不含页码）
+!                 first = lines[0]
+!                 if len(first) <= 40 and not first[0].isdigit():
+                      # 检查文本是否合理：至少含一些可读字符
+                      # 过滤全部相同字符（如 "nnnn"）或纯乱码
+!                     unique_chars = set(first)
+!                     if len(unique_chars) <= 2:
+!                         return ""
+!                     return first
+!         except Exception:
+!             pass
+!         return ""
+  
+>     @staticmethod
+>     def _looks_like_chapter_title(line: str) -> bool:
+>         """启发式判断一行是否为章节标题。
+  
+>         判定规则：
+>             - 以「第X章」「第X节」开头
+>             - 以「Chapter」开头
+>             - 常见结构标题（前言/序言/目录/附录/后记/结语/参考文献）
+>             - 全大写且长度 < 60
+>         """
+>         if not line or len(line) > 80:
+>             return False
+  
+          # 常见结构标题（无章节编号也视为标题）
+>         structural_titles = (
+>             "前言", "序言", "目录", "附录", "后记",
+>             "结语", "参考文献", "引言", "导论",
+>         )
+>         if line in structural_titles or any(
+>             line.startswith(t) and len(line) <= 20 for t in structural_titles
+>         ):
+>             return True
+  
+          # 中文章节标题
+>         if line.startswith("第") and any(
+>             kw in line for kw in ("章", "节", "部分", "篇")
+>         ):
+>             return True
+  
+          # 英文章节标题
+>         lower = line.lower()
+>         if lower.startswith(("chapter", "part", "section", "preface", "appendix")):
+>             return True
+  
+          # 全大写短行
+>         return bool(line.isupper() and len(line) < 60)
+  
+  
+> def iter_pdf_pages(path: str | Path) -> Iterator[str]:
+>     """迭代 PDF 每页文本（调试用）。"""
+!     import pdfplumber
+  
+!     with pdfplumber.open(str(path)) as pdf:
+!         for page in pdf.pages:
+!             yield page.extract_text() or ""

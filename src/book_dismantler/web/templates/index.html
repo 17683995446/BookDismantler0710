@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+    <meta name="theme-color" content="#FF2442">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Book Dismantler">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="description" content="Book Dismantler —— AI 驱动的开源拆书工具，将一本书拆解为大纲、概念、关系图谱、知识卡片等多种可复用产物。">
+    <title>Book Dismantler · AI 拆书工具</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4.5C3 3.67 3.67 3 4.5 3H10.5C11.33 3 12 3.67 12 4.5V19.5C12 18.67 11.33 18 10.5 18H4.5C3.67 18 3 17.33 3 16.5V4.5Z' fill='%23FF2442'/%3E%3Cpath d='M21 4.5C21 3.67 20.33 3 19.5 3H13.5C12.67 3 12 3.67 12 4.5V19.5C12 18.67 12.67 18 13.5 18H19.5C20.33 18 21 17.33 21 16.5V4.5Z' fill='%23FF2442' opacity='0.6'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260705m">
+    <!-- E4: 关键资源预加载（ECharts 体积大，对知识图谱关键） -->
+    <link rel="preload" as="script" href="/static/js/app.js?v=20260705j">
+    <script>
+        // 在页面渲染前应用已保存的主题，避免深色模式闪烁（FOUC）。
+        (function () {
+            try {
+                var saved = localStorage.getItem("bd-theme");
+                if (saved === "dark" || saved === "light") {
+                    document.documentElement.setAttribute("data-theme", saved);
+                } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+                    document.documentElement.setAttribute("data-theme", "dark");
+                }
+            } catch (e) {}
+        })();
+    </script>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="brand">
+                <span class="brand-logo" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 4.5C3 3.67 3.67 3 4.5 3H10.5C11.33 3 12 3.67 12 4.5V19.5C12 18.67 11.33 18 10.5 18H4.5C3.67 18 3 17.33 3 16.5V4.5Z" fill="currentColor" opacity="0.9"/><path d="M21 4.5C21 3.67 20.33 3 19.5 3H13.5C12.67 3 12 3.67 12 4.5V19.5C12 18.67 12.67 18 13.5 18H19.5C20.33 18 21 17.33 21 16.5V4.5Z" fill="currentColor" opacity="0.6"/></svg></span>
+                <div class="brand-text">
+                    <h1 class="brand-title">Book Dismantler</h1>
+                    <span class="brand-subtitle">AI 驱动的开源拆书工具</span>
+                </div>
+            </div>
+
+            <div class="header-search-wrap">
+                <span class="header-search-icon" aria-hidden="true">🔍</span>
+                <input type="text" class="header-search" id="header-search-input" placeholder="搜索书籍、知识、任务..." aria-label="搜索">
+            </div>
+
+            <nav class="tab-nav header-nav" aria-label="主导航" role="tablist">
+                <a href="#" class="nav-link" data-tab="knowledge" role="tab" aria-selected="false" aria-controls="tab-knowledge">知识</a>
+                <a href="#" class="nav-link active" data-tab="home" role="tab" aria-selected="true" aria-controls="tab-home">首页</a>
+                <a href="#" class="nav-link" data-tab="jobs" role="tab" aria-selected="false" aria-controls="tab-jobs">任务</a>
+                <a href="#" class="nav-link" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">设置</a>
+            </nav>
+
+            <div class="header-actions">
+                <button id="open-settings-modal" class="icon-btn" type="button" title="配置 API Key" aria-label="配置 API Key">
+                    <span aria-hidden="true">⚙️</span>
+                </button>
+                <button id="theme-toggle" class="icon-btn theme-toggle" type="button" title="切换深浅色主题" aria-label="切换深浅色主题">
+                    <span class="theme-icon theme-icon-moon" aria-hidden="true">🌙</span>
+                    <span class="theme-icon theme-icon-sun" aria-hidden="true">☀️</span>
+                </button>
+                <!-- B1: 移动端汉堡按钮（仅 ≤460px 显示） -->
+                <button id="mobile-menu-toggle" class="icon-btn mobile-menu-toggle" type="button" title="打开菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="mobile-menu-drawer">
+                    <span aria-hidden="true">☰</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- B1: 移动端抽屉（默认隐藏，≤460px 可触发） -->
+        <div id="mobile-menu-drawer" class="mobile-menu-drawer" role="dialog" aria-modal="false" aria-label="移动端菜单" hidden>
+            <div class="mobile-menu-backdrop" data-close-mobile-menu></div>
+            <div class="mobile-menu-panel">
+                <div class="mobile-menu-header">
+                    <span class="mobile-menu-title">导航菜单</span>
+                    <button class="icon-btn mobile-menu-close" type="button" aria-label="关闭菜单" data-close-mobile-menu><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+                </div>
+                <div class="mobile-menu-search">
+                    <span class="header-search-icon" aria-hidden="true">🔍</span>
+                    <input type="text" class="header-search" id="mobile-search-input" placeholder="搜索书籍、知识、任务..." aria-label="搜索">
+                </div>
+                <nav class="mobile-menu-nav" aria-label="移动端主导航" role="tablist">
+                    <a href="#" class="nav-link" data-tab="knowledge" role="tab" aria-selected="false">知识</a>
+                    <a href="#" class="nav-link active" data-tab="home" role="tab" aria-selected="true">首页</a>
+                    <a href="#" class="nav-link" data-tab="jobs" role="tab" aria-selected="false">任务</a>
+                    <a href="#" class="nav-link" data-tab="settings" role="tab" aria-selected="false">设置</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <!-- ============ 知识 Tab ============ -->
+        <section id="tab-knowledge" class="tab-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>知识浏览器</h2>
+                </div>
+                <p class="hint-text">选择一个已完成的拆书任务，浏览其知识模型（概念卡片、关系列表与知识图谱）。</p>
+                <div class="form-group">
+                    <label for="knowledge-job-select">选择任务</label>
+                    <select id="knowledge-job-select" class="form-control">
+                        <option value="">-- 请选择 --</option>
+                    </select>
+                </div>
+            </div>
+            <div id="knowledge-content">
+                <div class="empty-state empty-state-lg">
+                    <div class="empty-state-icon">📚</div>
+                    <p class="empty-state-title">选择一本书开始探索</p>
+                    <p class="empty-state-desc">从上方下拉选择已完成的拆书任务，浏览概念卡片、知识图谱和关系网络。</p>
+                    <button class="btn btn-primary btn-large btn-block" type="button" data-go-home>去上传书籍</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ 首页 Tab（默认首页） ============ -->
+        <section id="tab-home" class="tab-panel active" role="tabpanel">
+            <div class="hero card">
+                <div class="hero-content">
+                    <h2 class="hero-title">把一本书拆成可复用的知识</h2>
+                    <!-- E3: Hero 描述拆分为 3 个短句分行，降低阅读负担 -->
+                    <ul class="hero-desc-list">
+                        <li>上传书籍，AI 自动提取大纲与概念</li>
+                        <li>生成关系图谱与概念解剖</li>
+                        <li>输出笔记、导图、卡片等信息产物</li>
+                    </ul>
+                    <div class="hero-actions">
+                        <a href="#" class="btn btn-primary" id="hero-upload-btn">开始拆书</a>
+                        <a href="#" class="btn btn-ghost" data-tab="settings">配置 API Key</a>
+                    </div>
+                </div>
+                <div class="hero-art" aria-hidden="true">
+                    <span class="hero-emoji">📖</span>
+                </div>
+                <!-- C3: 移动端"查看示例效果"快捷链接（≤460px 显示在 Hero 右上角） -->
+                <a href="#" id="hero-demo-link" class="hero-demo-link" data-tab="knowledge" aria-label="查看示例效果">示例 →</a>
+            </div>
+
+            <!-- 拆书流程示意 -->
+            <div class="card flow-steps-card">
+                <div class="flow-steps">
+                    <div class="flow-step">
+                        <div class="flow-step-num">1</div>
+                        <div class="flow-step-body">
+                            <div class="flow-step-title">上传书籍</div>
+                            <div class="flow-step-desc">
+                                <span class="flow-desc-desktop">PDF 或 EPUB，拖拽即可</span>
+                                <span class="flow-desc-mobile">选择 PDF 或 EPUB 文件</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flow-step-arrow">→</div>
+                    <div class="flow-step">
+                        <div class="flow-step-num">2</div>
+                        <div class="flow-step-body">
+                            <div class="flow-step-title">AI 拆解</div>
+                            <div class="flow-step-desc">大纲·概念·关系·解剖</div>
+                        </div>
+                    </div>
+                    <div class="flow-step-arrow">→</div>
+                    <div class="flow-step">
+                        <div class="flow-step-num">3</div>
+                        <div class="flow-step-body">
+                            <div class="flow-step-title">获取产物</div>
+                            <div class="flow-step-desc">笔记·导图·卡片·图谱</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>示例书籍</h2>
+                    <span class="badge badge-muted">点击即用 · 无需配置</span>
+                </div>
+                <p class="hint-text">点击下方任意书籍即可直接开始拆书，也可以先<a href="#" id="view-demo-link" data-tab="knowledge">查看示例效果</a>：</p>
+                <div id="sample-books-list" class="sample-books-list">
+                    <p class="placeholder-text">加载中…</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>上传电子书</h2>
+                    <span class="badge badge-muted">PDF · EPUB</span>
+                </div>
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-content">
+                        <svg class="upload-icon" viewBox="0 0 24 24" width="48" height="48" aria-hidden="true">
+                            <path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"></path>
+                        </svg>
+                        <p class="drop-zone-text">拖拽文件到此处，或</p>
+                        <p class="drop-zone-text-mobile">点击下方按钮上传文件</p>
+                        <button id="browse-btn" class="btn btn-primary" type="button">选择文件</button>
+                        <input type="file" id="file-input" accept=".pdf,.epub" hidden>
+                        <span class="drop-zone-hint">支持 PDF、EPUB 格式，单文件最大 50MB</span>
+                    </div>
+                </div>
+                <div id="upload-result" class="upload-result hidden"></div>
+            </div>
+
+            <!-- B2: 创建任务模态弹层（遮罩+关闭按钮） -->
+            <div id="create-job-overlay" class="modal-overlay hidden" aria-hidden="true">
+                <div id="create-job-section" class="card modal-card hidden" role="dialog" aria-labelledby="create-job-title" aria-modal="true">
+                    <div class="card-header">
+                        <h2 id="create-job-title">创建拆书任务</h2>
+                        <button id="create-job-close" class="btn btn-sm btn-ghost modal-close-btn" type="button" aria-label="关闭"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+                    </div>
+                    <p class="hint-text">选择 LLM 服务商与模型（可选），点击开始拆书。</p>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="provider-select">LLM 服务商</label>
+                            <select id="provider-select" class="form-control">
+                                <option value="">使用默认</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="ollama">Ollama（本地）</option>
+                                <option value="siliconflow">硅基流动 SiliconFlow（免费）</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="model-input">模型名称（可选）</label>
+                            <input type="text" id="model-input" class="form-control" placeholder="如 THUDM/GLM-4-9B-0414">
+                        </div>
+                    </div>
+                    <button id="create-job-btn" class="btn btn-primary btn-large btn-block" type="button">开始拆书</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ 任务 Tab ============ -->
+        <section id="tab-jobs" class="tab-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>任务列表</h2>
+                    <button id="refresh-jobs-btn" class="btn btn-sm btn-ghost icon-btn" type="button" aria-label="刷新任务列表"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-2.64-6.36L21 8M21 3v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+                <div id="jobs-list" class="jobs-list">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📚</div>
+                        <p class="empty-state-title">还没有拆书任务</p>
+                        <p class="empty-state-desc">上传一本电子书或点击示例书籍，即可开始拆解</p>
+                        <a href="#" class="btn btn-sm btn-primary" data-tab="home">去首页开始</a>
+                    </div>
+                </div>
+            </div>
+
+            <div id="job-detail-section" class="card hidden">
+                <div class="card-header job-detail-header-row">
+                    <button id="close-detail-btn" class="btn btn-sm btn-ghost icon-btn" type="button" aria-label="返回列表" title="返回列表"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                    <h2 id="job-detail-title" style="flex:1;min-width:0;">任务详情</h2>
+                </div>
+                <div id="job-detail-content"></div>
+                <h3 class="section-subtitle">产物列表</h3>
+                <div id="artifacts-list" class="artifacts-list"></div>
+            </div>
+        </section>
+
+        <!-- ============ 设置 Tab ============ -->
+        <section id="tab-settings" class="tab-panel" role="tabpanel">
+            <div id="settings-content">
+                <!-- D4: skeleton 占位（3 行灰色动画，0.5s 后由 loadSettings 替换） -->
+                <div class="card settings-skeleton" aria-hidden="true">
+                    <div class="skeleton-line skeleton-line-title"></div>
+                    <div class="skeleton-line skeleton-line-w80"></div>
+                    <div class="skeleton-line skeleton-line-w60"></div>
+                    <div class="skeleton-line skeleton-line-w90"></div>
+                    <span class="sr-only">加载中…</span>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <span>Book Dismantler · 开源 AI 拆书工具</span>
+        <span class="footer-sep" aria-hidden="true">·</span>
+        <a class="footer-link" href="/docs" target="_blank" rel="noopener">API 文档</a>
+        <span class="footer-sep" aria-hidden="true">·</span>
+        <a class="footer-link" href="/health" target="_blank" rel="noopener">健康检查</a>
+    </footer>
+
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <!-- 产物预览 Modal（同时提供 app.js 需要的 modal-* ID 和用户要求的 preview-* ID） -->
+    <div id="preview-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-backdrop" id="modal-overlay" data-close></div>
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="modal-header">
+                <h3 id="modal-title" class="modal-title">预览</h3>
+                <div class="modal-header-actions">
+                    <a id="modal-download" class="btn btn-sm btn-secondary" href="#" download>下载</a>
+                    <a id="preview-open-ext" class="btn btn-sm btn-ghost" href="#" target="_blank" rel="noopener">新窗口打开</a>
+                    <button id="modal-close" class="btn btn-sm btn-secondary" type="button">关闭</button>
+                    <button id="preview-close" class="icon-btn" type="button" aria-label="关闭预览"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+                </div>
+            </div>
+            <div id="modal-body" class="modal-body">
+                <div id="preview-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Key 快速配置 Modal -->
+    <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-dialog modal-dialog-sm">
+            <div class="modal-header">
+                <h3 id="settings-modal-title" class="modal-title">配置 API Key</h3>
+                <button id="settings-modal-close" class="icon-btn" type="button" aria-label="关闭"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="modal-provider">Provider</label>
+                    <select id="modal-provider" class="form-control">
+                        <option value="openai">OpenAI</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="gemini">Gemini</option>
+                        <option value="ollama">Ollama（本地）</option>
+                        <option value="siliconflow" selected>硅基流动 SiliconFlow（免费）</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="modal-apikey">API Key</label>
+                    <input type="password" id="modal-apikey" class="form-control" placeholder="输入 API Key" autocomplete="off">
+                </div>
+                <button id="modal-save-key" class="btn btn-primary btn-large btn-block" type="button">保存</button>
+                <p class="hint-text">API Key 仅在运行时生效，不会写入 .env。也可在「设置」标签页管理全部 Provider。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通用确认对话框 Modal -->
+    <div id="confirm-modal" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-dialog modal-dialog-sm">
+            <div class="modal-header">
+                <h3 id="confirm-modal-title" class="modal-title">确认操作</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-modal-message" class="confirm-message"></p>
+                <div class="confirm-actions">
+                    <button id="confirm-modal-cancel" class="btn btn-secondary" type="button">取消</button>
+                    <button id="confirm-modal-ok" class="btn btn-danger" type="button">确认删除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <nav class="bottom-nav" aria-label="底部导航">
+        <a href="#" class="bottom-nav-item" data-tab="knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            <span>知识</span>
+        </a>
+        <a href="#" class="bottom-nav-item" data-tab="jobs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            <span>任务</span>
+        </a>
+        <a href="#" class="bottom-nav-item" id="bottom-nav-add" role="button" aria-label="上传书籍">
+            <div class="bottom-nav-add" aria-hidden="true">+</div>
+        </a>
+        <a href="#" class="bottom-nav-item active" data-tab="home">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <span>首页</span>
+        </a>
+        <a href="#" class="bottom-nav-item" data-tab="settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>设置</span>
+        </a>
+    </nav>
+
+    <script src="/static/js/utils.js?v=20260705a"></script>
+    <script src="/static/js/store.js?v=20260705a"></script>
+    <script src="/static/js/eventbus.js?v=20260705a"></script>
+    <script src="/static/js/router.js?v=20260705a"></script>
+    <script src="/static/js/components/error-boundary.js?v=20260705a"></script>
+    <script src="/static/js/components/confirm-modal.js?v=20260705a"></script>
+    <script src="/static/js/components/empty-state.js?v=20260705a"></script>
+    <script src="/static/js/components/job-card.js?v=20260705a"></script>
+    <script src="/static/js/api.js?v=20260705a"></script>
+    <script src="/static/js/app.js?v=20260705j"></script>
+    <script>
+    /* =====================================================================
+     * 前端渐进增强脚本（与 app.js 互补，不覆盖其核心交互）。
+     *
+     * app.js 已完整处理：标签切换、示例书籍、拖拽上传、任务创建/轮询/列表/
+     *   详情/产物预览、知识浏览器渲染、基础设置表单、主题切换、Toast。
+     *
+     * 本脚本仅负责以下增强功能：
+     *   1. API Key 快速配置 Modal（#settings-modal）
+     *   2. 设置标签页增强：移除 app.js 的基础表单，渲染 Provider 卡片
+     *   3. 知识浏览器增强：注入关系图谱占位卡片
+     *   4. 预览 Modal 增强：同步"新窗口打开"链接
+     *   5. 首页 Hero 按钮滚动、配置链接跳转
+     * ===================================================================== */
+    (function () {
+        "use strict";
+
+        var API_BASE = "/api";
+
+        // ---------- 工具函数 ----------
+        function $(id) { return document.getElementById(id); }
+        function mk(tag, cls, html) {
+            var e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (html != null) e.innerHTML = html;
+            return e;
+        }
+        function esc(s) {
+            s = s == null ? "" : String(s);
+            var d = document.createElement("div");
+            d.textContent = s;
+            return d.innerHTML;
+        }
+        function fetchJSON(url, opts) {
+            return fetch(url, opts).then(function (r) {
+                if (!r.ok) {
+                    return r.json().then(function (d) {
+                        throw new Error(d.detail || ("HTTP " + r.status));
+                    }, function () { throw new Error("HTTP " + r.status); });
+                }
+                return r.json();
+            });
+        }
+        function toast(msg, type) {
+            var t = $("toast");
+            if (!t) return;
+            t.textContent = msg;
+            t.className = "toast " + (type || "info");
+            t.classList.remove("hidden");
+            clearTimeout(t._tm);
+            t._tm = setTimeout(function () { t.classList.add("hidden"); }, 3200);
+        }
+
+        // ==================================================================
+        // 知识海报卡片生成（每张可单独导出为独立 HTML 文件）
+        // ==================================================================
+        var POSTER_THEMES = {
+            high:   { from: "#f43f5e", to: "#e11d48", light: "#fff1f2", border: "#fecdd3" },
+            medium: { from: "#f59e0b", to: "#d97706", light: "#fffbeb", border: "#fde68a" },
+            low:    { from: "#10b981", to: "#059669", light: "#ecfdf5", border: "#a7f3d0" }
+        };
+        var POSTER_IMP_LABELS = { high: "核心", medium: "重要", low: "参考" };
+
+        function generatePosterCard(name, definition, meta, examples, importance, bookTitle, idx) {
+            var theme = POSTER_THEMES[importance] || POSTER_THEMES.medium;
+            var impLabel = POSTER_IMP_LABELS[importance] || "重要";
+            var card = mk("div", "poster-mini");
+            /* P0-13: 先解析 meta 再设 dataset.search，修复变量提升 bug */
+            var metaParts = meta.split("·").map(function (s) { return s.trim(); }).filter(Boolean);
+            var typeText = "";
+            var sourceText = "";
+            metaParts.forEach(function (p) {
+                if (p.indexOf("类型:") === 0) typeText = p.replace("类型:", "").trim();
+                else if (p.indexOf("来源:") === 0) sourceText = p.replace("来源:", "").trim();
+            });
+            card.dataset.search = (name + " " + (definition || "") + " " + (typeText || "") + " " + (sourceText || "")).toLowerCase();
+            card.style.setProperty("--p-from", theme.from);
+            card.style.setProperty("--p-to", theme.to);
+            card.style.setProperty("--p-light", theme.light);
+            card.style.setProperty("--p-border", theme.border);
+
+            card.innerHTML =
+                '<div class="poster-mini-bar"></div>' +
+                '<div class="poster-mini-body">' +
+                    '<div class="poster-mini-top">' +
+                        '<span class="poster-mini-badge">' + esc(impLabel) + '</span>' +
+                        (typeText ? '<span class="poster-mini-type">' + esc(typeText) + '</span>' : '') +
+                    '</div>' +
+                    '<h3 class="poster-mini-title">' + esc(name) + '</h3>' +
+                    (definition ? '<p class="poster-mini-def">' + esc(definition) + '</p>' : '') +
+                    (examples ? '<div class="poster-mini-examples"><span class="poster-mini-label">示例</span><p>' + esc(examples) + '</p></div>' : '') +
+                    (sourceText ? '<div class="poster-mini-source">' + esc(sourceText) + '</div>' : '') +
+                    '<div class="poster-mini-footer">' +
+                        '<span class="poster-mini-book">' + esc(bookTitle) + '</span>' +
+                        '<button class="btn btn-sm btn-ghost poster-mini-export" type="button">导出</button>' +
+                    '</div>' +
+                '</div>';
+
+            var exportBtn = card.querySelector(".poster-mini-export");
+            exportBtn.addEventListener("click", function () {
+                exportPosterCardHTML(name, definition, typeText, sourceText, examples, importance, bookTitle);
+            });
+
+            return card;
+        }
+        /* 暴露到全局供 app.js 调用 */
+        window.generatePosterCard = generatePosterCard;
+
+        function exportPosterCardHTML(name, definition, type, source, examples, importance, bookTitle) {
+            var theme = POSTER_THEMES[importance] || POSTER_THEMES.medium;
+            var impLabel = POSTER_IMP_LABELS[importance] || "重要";
+            var html = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n' +
+                '<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n' +
+                '<title>' + esc(name) + ' - 知识卡片</title>\n' +
+                '<style>\n' +
+                '* { margin:0; padding:0; box-sizing:border-box; }\n' +
+                'body { font-family:"Noto Sans SC","Microsoft YaHei",sans-serif; background:#f0f4f8; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:40px 20px; }\n' +
+                '.card { width:420px; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.12); }\n' +
+                '.bar { height:5px; background:linear-gradient(90deg,' + theme.from + ',' + theme.to + '); }\n' +
+                '.body { padding:28px 26px 24px; }\n' +
+                '.top { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }\n' +
+                '.badge { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; color:' + theme.to + '; background:' + theme.light + '; padding:4px 12px; border-radius:20px; }\n' +
+                '.type { font-size:12px; color:#94a3b8; font-weight:600; text-transform:uppercase; letter-spacing:1px; }\n' +
+                '.title { font-size:24px; font-weight:800; color:#0f172a; margin-bottom:14px; line-height:1.3; }\n' +
+                '.def { font-size:15px; line-height:1.7; color:#334155; padding:14px 16px; background:#f8fafc; border-radius:10px; border-left:3px solid ' + theme.border + '; margin-bottom:14px; }\n' +
+                '.examples { margin-bottom:14px; }\n' +
+                '.examples .label { display:block; font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:1.2px; margin-bottom:5px; }\n' +
+                '.examples p { font-size:14px; color:#475569; line-height:1.6; }\n' +
+                '.source { font-size:12px; color:#94a3b8; margin-bottom:16px; font-weight:500; }\n' +
+                '.footer { display:flex; justify-content:space-between; align-items:center; padding-top:14px; border-top:1px solid #f1f5f9; }\n' +
+                '.book { font-size:12px; color:#64748b; font-weight:600; }\n' +
+                '.imp-label { font-size:11px; color:#cbd5e1; font-weight:600; }\n' +
+                '</style>\n</head>\n<body>\n' +
+                '<div class="card">\n<div class="bar"></div>\n<div class="body">\n' +
+                '<div class="top">\n<span class="badge">' + impLabel + '</span>\n' +
+                (type ? '<span class="type">' + esc(type) + '</span>' : '<span class="type">概念</span>') + '\n</div>\n' +
+                '<h1 class="title">' + esc(name) + '</h1>\n' +
+                (definition ? '<div class="def">' + esc(definition) + '</div>\n' : '') +
+                (examples ? '<div class="examples"><span class="label">示例</span><p>' + esc(examples) + '</p></div>\n' : '') +
+                (source ? '<div class="source">来源: ' + esc(source) + '</div>\n' : '') +
+                '<div class="footer">\n<span class="book">' + esc(bookTitle) + '</span>\n<span class="imp-label">' + impLabel + '概念</span>\n</div>\n' +
+                '</div>\n</div>\n</body>\n</html>';
+
+            var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.href = url;
+            a.download = name.replace(/[<>:"/\\|?*]/g, "_") + "-知识卡片.html";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+            toast("已导出: " + name, "success");
+        }
+
+        // ==================================================================
+        // 1. 通用 Modal 控制（仅用于 #settings-modal，预览 Modal 由 app.js 管理）
+        // ==================================================================
+        function openSettingsModal() {
+            var modal = $("settings-modal");
+            if (!modal) return;
+            modal.classList.remove("hidden");
+            document.body.classList.add("modal-open");
+        }
+        function closeSettingsModal() {
+            var modal = $("settings-modal");
+            if (!modal) return;
+            modal.classList.add("hidden");
+            document.body.classList.remove("modal-open");
+        }
+
+        // 绑定 settings-modal 的关闭交互
+        var settingsModal = $("settings-modal");
+        if (settingsModal) {
+            settingsModal.addEventListener("click", function (e) {
+                if (e.target === settingsModal || e.target.hasAttribute("data-close")) {
+                    closeSettingsModal();
+                }
+            });
+        }
+        var settingsModalClose = $("settings-modal-close");
+        if (settingsModalClose) settingsModalClose.addEventListener("click", closeSettingsModal);
+        /* #102: Escape 键已由 app.js 的统一 handleEscapeKey 处理，此处不再单独监听 */
+
+        /* #99: 预览 Modal 的 × 关闭按钮已统一由 app.js 的 closeModal 处理 */
+
+        // 打开 settings-modal 的齿轮按钮
+        var openSettingsBtn = $("open-settings-modal");
+        if (openSettingsBtn) openSettingsBtn.addEventListener("click", openSettingsModal);
+
+        // 保存 API Key（Modal 内）
+        var modalSaveKey = $("modal-save-key");
+        if (modalSaveKey) modalSaveKey.addEventListener("click", function () {
+            var provider = $("modal-provider") ? $("modal-provider").value : "";
+            var key = $("modal-apikey") ? $("modal-apikey").value : "";
+            if (!key) { toast("请输入 API Key", "error"); return; }
+            modalSaveKey.disabled = true;
+            fetchJSON(API_BASE + "/settings/", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ provider: provider, api_key: key })
+            }).then(function () {
+                toast("已保存 " + provider + " 的 API Key", "success");
+                if ($("modal-apikey")) $("modal-apikey").value = "";
+                closeSettingsModal();
+                settingsLoaded = false;
+            }).catch(function (err) {
+                toast(err.message || "保存失败", "error");
+            }).finally(function () { modalSaveKey.disabled = false; });
+        });
+
+        // ==================================================================
+        // 2. 预览 Modal 增强：同步"新窗口打开"链接与下载按钮
+        // ==================================================================
+        var modalDownload = $("modal-download");
+        var previewOpenExt = $("preview-open-ext");
+        if (modalDownload && previewOpenExt && window.MutationObserver) {
+            var syncOpenExt = function () {
+                var href = modalDownload.getAttribute("href") || "#";
+                var hidden = modalDownload.classList.contains("hidden");
+                previewOpenExt.setAttribute("href", href);
+                previewOpenExt.style.display = hidden ? "none" : "";
+            };
+            var dmo = new MutationObserver(syncOpenExt);
+            dmo.observe(modalDownload, { attributes: true, attributeFilter: ["href", "class"] });
+            syncOpenExt();
+        }
+
+        // ==================================================================
+        // 3. 设置标签页增强：Provider 卡片 + API Key 输入
+        // ==================================================================
+        var settingsLoaded = false;
+        var PROVIDERS = [
+            { key: "openai", name: "OpenAI", desc: "GPT-4o / GPT-4o-mini 等", env: "BOOK_DISMANTLER_OPENAI_API_KEY", help: "https://platform.openai.com/api-keys", keyPrefix: "sk-" },
+            { key: "deepseek", name: "DeepSeek", desc: "DeepSeek-Chat / DeepSeek-Coder", env: "BOOK_DISMANTLER_DEEPSEEK_API_KEY", help: "https://platform.deepseek.com/api_keys", keyPrefix: "sk-" },
+            { key: "gemini", name: "Gemini", desc: "Google Gemini Pro / Flash", env: "BOOK_DISMANTLER_GEMINI_API_KEY", help: "https://aistudio.google.com/apikey", keyPrefix: "AIza" },
+            { key: "ollama", name: "Ollama", desc: "本地部署，无需 API Key", env: "无需配置", help: "https://ollama.ai", keyPrefix: null },
+            { key: "siliconflow", name: "硅基流动 SiliconFlow", desc: "免费模型丰富，GLM-4-9B 等", env: "BOOK_DISMANTLER_SILICONFLOW_API_KEY", help: "https://cloud.siliconflow.cn/account/ak", keyPrefix: "sk-" }
+        ];
+
+        function loadSettings() {
+            // 移除 app.js 自动生成的基础设置表单，避免重复
+            var sfc = $("settings-form-card");
+            if (sfc) sfc.remove();
+
+            if (settingsLoaded) return;
+            settingsLoaded = true;
+
+            var c = $("settings-content");
+            if (!c) return;
+            c.innerHTML = '<div class="card"><p class="placeholder-text">加载中…</p></div>';
+
+            fetchJSON(API_BASE + "/settings/").then(function (data) {
+                renderSettings(c, data);
+            }).catch(function () {
+                c.innerHTML = '<div class="card"><p class="placeholder-text">加载设置失败，请检查后端服务。</p></div>';
+                settingsLoaded = false;
+            });
+        }
+
+        function renderSettings(c, data) {
+            var h = "";
+
+            // 默认配置卡片
+            h += '<div class="card settings-card">';
+            h += '<div class="card-header"><h2>默认配置</h2></div>';
+            h += '<div class="form-grid">';
+            h += '<div class="form-group"><label for="set-default-provider">默认 Provider</label>';
+            h += '<select id="set-default-provider" class="form-control">';
+            PROVIDERS.forEach(function (p) {
+                h += '<option value="' + p.key + '"' + (data.default_provider === p.key ? " selected" : "") + ">" + esc(p.name) + "</option>";
+            });
+            h += '</select></div>';
+            h += '<div class="form-group"><label for="set-default-model">默认模型</label>';
+            h += '<input type="text" id="set-default-model" class="form-control" value="' + esc(data.default_model || "") + '" placeholder="如 gpt-4o-mini"></div>';
+            h += '</div>';
+            h += '<button id="set-save-defaults" class="btn btn-primary" type="button">保存默认配置</button>';
+            h += '</div>';
+
+            // P1-9: Provider 与 API Key 卡片（合并到同一区域）
+            h += '<div class="card">';
+            h += '<div class="card-header"><h2>Provider 与 API Key</h2></div>';
+            h += '<p class="hint-text">API Key 仅在运行时生效，不会写入 .env 文件；如需持久化请通过环境变量配置。</p>';
+            h += '<div class="providers-grid">';
+            PROVIDERS.forEach(function (p) {
+                var info = (data.providers && data.providers[p.key]) || {};
+                var conf = !!info.configured;
+                h += '<div class="provider-card' + (conf ? " configured" : "") + '" data-provider="' + p.key + '">';
+                h += '<div class="provider-card-head" data-provider-toggle="' + p.key + '"><h3>' + esc(p.name) + '</h3>';
+                if (p.key === "siliconflow") h += '<span class="badge badge-success">推荐 · 免费</span>';
+                else h += '<span class="badge ' + (conf ? "badge-success" : "badge-muted") + '">' + (conf ? "已配置" : "未配置") + '</span>';
+                h += '<span class="provider-toggle-icon" aria-hidden="true">▾</span>';
+                h += '</div>';
+                h += '<div class="provider-card-body' + (conf ? " expanded" : " collapsed") + '">';
+                h += '<p class="provider-desc">' + esc(p.desc) + '</p>';
+                if (info.base_url) h += '<div class="provider-baseurl">Base URL: <code>' + esc(info.base_url) + '</code></div>';
+                if (p.key !== "ollama") {
+                    h += '<label class="provider-key-label">API Key</label>';
+                    h += '<div class="provider-key-row">';
+                    /* P1-11: 已配置状态添加 is-configured 类区分视觉 */
+                    h += '<input type="password" class="form-control provider-key-input' + (conf ? " is-configured" : "") + '" data-provider="' + p.key + '" data-prefix="' + (p.keyPrefix || "") + '" placeholder="' + (conf ? ("已配置：" + esc(info.api_key || "")) : "输入 API Key") + '" autocomplete="off">';
+                    h += '<button class="btn btn-sm btn-ghost toggle-key-btn" data-provider="' + p.key + '" type="button" title="显示/隐藏">👁</button>';
+                    h += '<button class="btn btn-sm btn-primary provider-save-btn" data-provider="' + p.key + '" type="button">保存</button>';
+                    h += '</div>';
+                    h += '<div class="provider-key-hint" data-provider="' + p.key + '"></div>';
+                    if (p.help) h += '<a href="' + esc(p.help) + '" target="_blank" rel="noopener" class="provider-help-link">获取 API Key →</a>';
+                }
+                h += '<div class="provider-env">环境变量: <code>' + esc(p.env) + '</code></div>';
+                h += '</div>'; /* provider-card-body */
+                h += '</div>'; /* provider-card */
+            });
+            h += '</div></div>';
+
+            // 产物类型说明卡片
+            h += '<div class="card"><div class="card-header"><h2>支持的产物类型</h2></div>';
+            h += '<div class="artifacts-grid">';
+            [["📝", "Markdown 笔记"], ["🗂️", "OrgMode 笔记"], ["🧠", "思维导图"],
+             ["🎴", "知识卡片"], ["📊", "信息图"], ["🔬", "概念剖析图"]].forEach(function (t) {
+                h += '<div class="artifact-type"><span class="artifact-icon">' + t[0] + '</span><span>' + t[1] + '</span></div>';
+            });
+            h += '</div></div>';
+
+            c.innerHTML = h;
+
+            // P1-10: Provider 卡片折叠/展开（手风琴模式）
+            c.querySelectorAll("[data-provider-toggle]").forEach(function (head) {
+                head.addEventListener("click", function () {
+                    var card = head.closest(".provider-card");
+                    if (!card) return;
+                    var body = card.querySelector(".provider-card-body");
+                    if (!body) return;
+                    var icon = head.querySelector(".provider-toggle-icon");
+                    var isCollapsed = body.classList.contains("collapsed");
+                    /* 手风琴：先折叠所有 */
+                    c.querySelectorAll(".provider-card-body").forEach(function (b) {
+                        b.classList.remove("expanded");
+                        b.classList.add("collapsed");
+                    });
+                    c.querySelectorAll(".provider-toggle-icon").forEach(function (i) {
+                        i.style.transform = "";
+                    });
+                    /* 再展开当前（如果之前是折叠的） */
+                    if (isCollapsed) {
+                        body.classList.remove("collapsed");
+                        body.classList.add("expanded");
+                        if (icon) icon.style.transform = "rotate(180deg)";
+                    }
+                });
+            });
+
+            // 保存默认配置
+            var sb = $("set-save-defaults");
+            if (sb) sb.addEventListener("click", function () {
+                var body = {
+                    provider: $("set-default-provider") ? $("set-default-provider").value : null,
+                    model: $("set-default-model") ? $("set-default-model").value : null
+                };
+                sb.disabled = true;
+                fetchJSON(API_BASE + "/settings/", {
+                    method: "PUT", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body)
+                }).then(function () { toast("默认配置已保存", "success"); })
+                  .catch(function (e) { toast(e.message || "保存失败", "error"); })
+                  .finally(function () { sb.disabled = false; });
+            });
+
+            // 保存各 Provider API Key（带格式校验）
+            c.querySelectorAll(".provider-save-btn").forEach(function (b) {
+                b.addEventListener("click", function () {
+                    var pk = b.dataset.provider;
+                    var inp = c.querySelector('.provider-key-input[data-provider="' + pk + '"]');
+                    var key = inp ? inp.value : "";
+                    var hint = c.querySelector('.provider-key-hint[data-provider="' + pk + '"]');
+                    if (!key) { toast("请输入 API Key", "error"); return; }
+                    /* 格式校验 */
+                    var prefix = inp.dataset.prefix;
+                    if (prefix && key && !key.startsWith(prefix)) {
+                        if (hint) { hint.textContent = "Key 应以 " + prefix + " 开头，请检查"; hint.className = "provider-key-hint error"; }
+                        toast("API Key 格式可能有误（应以 " + prefix + " 开头）", "error");
+                        return;
+                    }
+                    if (hint) { hint.textContent = ""; hint.className = "provider-key-hint"; }
+                    b.disabled = true;
+                    b.textContent = "保存中…";
+                    fetchJSON(API_BASE + "/settings/", {
+                        method: "PUT", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ provider: pk, api_key: key })
+                    }).then(function () {
+                        toast("已保存 " + pk + " 的 API Key", "success");
+                        settingsLoaded = false; loadSettings();
+                    }).catch(function (e) { toast(e.message || "保存失败", "error"); })
+                      .finally(function () { b.disabled = false; b.textContent = "保存"; });
+                });
+            });
+
+            // 显示/隐藏 API Key
+            c.querySelectorAll(".toggle-key-btn").forEach(function (b) {
+                b.addEventListener("click", function () {
+                    var pk = b.dataset.provider;
+                    var inp = c.querySelector('.provider-key-input[data-provider="' + pk + '"]');
+                    if (!inp) return;
+                    if (inp.type === "password") { inp.type = "text"; b.textContent = "🙈"; }
+                    else { inp.type = "password"; b.textContent = "👁"; }
+                });
+            });
+
+            // 实时格式校验
+            c.querySelectorAll(".provider-key-input").forEach(function (inp) {
+                inp.addEventListener("input", function () {
+                    var pk = inp.dataset.provider;
+                    var prefix = inp.dataset.prefix;
+                    var hint = c.querySelector('.provider-key-hint[data-provider="' + pk + '"]');
+                    if (!hint || !prefix) return;
+                    var val = inp.value.trim();
+                    if (val && !val.startsWith(prefix)) {
+                        hint.textContent = "提示：Key 通常以 " + prefix + " 开头";
+                        hint.className = "provider-key-hint warning";
+                    } else {
+                        hint.textContent = "";
+                        hint.className = "provider-key-hint";
+                    }
+                });
+            });
+        }
+
+        // ==================================================================
+        // 4. 知识浏览器增强：交互式知识图谱（ECharts 力导向图）
+        //    由 app.js renderKnowledge() 调用 window.initKnowledgeGraph()
+        //    ECharts 已本地化到 /static/vendor/echarts.min.js，无需 CDN
+        // ==================================================================
+        var echartsLoaded = false;
+        function loadECharts(callback) {
+            if (echartsLoaded || window.echarts) { callback(); return; }
+            var s = document.createElement("script");
+            s.src = "/static/vendor/echarts.min.js?v=5.4.3";
+            s.onload = function() { echartsLoaded = true; callback(); };
+            s.onerror = function() {
+                console.warn("ECharts 本地加载失败，知识图谱不可用");
+                var chartDom = document.getElementById("knowledge-graph-chart");
+                if (chartDom) chartDom.innerHTML = '<p class="placeholder-text">知识图谱加载失败</p>';
+            };
+            document.head.appendChild(s);
+        }
+
+        /* 初始化知识图谱，供 app.js 调用 */
+        window.initKnowledgeGraph = function (kcEl, model) {
+            loadECharts(function () {
+                var chartDom = document.getElementById("knowledge-graph-chart");
+                if (!chartDom) return;
+                var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+                var labelColor = isDark ? "#e7ecf3" : "#334155";
+                var legendColor = isDark ? "#94a3b8" : "#64748b";
+                var labelBg = isDark ? "rgba(28,31,38,0.85)" : "rgba(255,255,255,0.85)";
+
+                /* 释放前一个 ECharts 实例和 resize 监听器 */
+                var prevChart = chartDom._echartsInstance;
+                if (prevChart) prevChart.dispose();
+                var prevResize = chartDom._resizeHandler;
+                if (prevResize) window.removeEventListener("resize", prevResize);
+
+                var myChart;
+                try {
+                    myChart = echarts.init(chartDom);
+                } catch (e) {
+                    console.warn("ECharts 初始化失败:", e);
+                    chartDom.innerHTML = '<p class="placeholder-text">知识图谱初始化失败</p>';
+                    return;
+                }
+                chartDom._echartsInstance = myChart;
+                kcEl._echartsInstance = myChart; /* 供分段切换 resize 用 */
+
+                if (!model || !model.relationships) return;
+
+                var nodes = [];
+                var conceptMap = {};
+                (model.concepts || []).forEach(function (c) {
+                    conceptMap[c.name.trim().toLowerCase()] = c;
+                });
+                var allNames = {};
+                (model.relationships || []).forEach(function (r) {
+                    allNames[r.source.trim()] = true;
+                    allNames[r.target.trim()] = true;
+                });
+                Object.keys(allNames).forEach(function (name) {
+                    var c = conceptMap[name.trim().toLowerCase()];
+                    if (c) {
+                        var imp = c.importance || "medium";
+                        /* P1-7: 增大节点尺寸提升触摸可点击性 */
+                        var sz = imp === "high" ? 56 : imp === "medium" ? 44 : 36;
+                        var col = imp === "high" ? "#ef4444" : imp === "medium" ? "#f59e0b" : "#10b981";
+                        nodes.push({
+                            name: name, value: c.definition || "",
+                            symbolSize: sz, itemStyle: {color: col, shadowBlur: 6, shadowColor: col + "40"},
+                            category: imp === "high" ? "核心" : imp === "medium" ? "重要" : "参考"
+                        });
+                    } else {
+                        nodes.push({name: name, symbolSize: 32, itemStyle: {color: "#94a3b8", opacity: 0.7}, category: "参考"});
+                    }
+                });
+                var relColors = {
+                    "is-a": "#3b82f6", "part-of": "#8b5cf6", "depends-on": "#f59e0b",
+                    "contradicts": "#ef4444", "supports": "#10b981", "related-to": "#64748b"
+                };
+                var relLabels = {
+                    "is-a": "属于", "part-of": "包含", "depends-on": "依赖",
+                    "contradicts": "对立", "supports": "支持", "related-to": "相关"
+                };
+                var links = (model.relationships || []).map(function (r) {
+                    var t = r.type || "related-to";
+                    return {
+                        source: r.source.trim(), target: r.target.trim(),
+                        value: relLabels[t] || t,
+                        lineStyle: {color: relColors[t] || "#64748b", width: 1.5, curveness: 0.12,
+                            type: (t === "depends-on" || t === "contradicts" || t === "related-to") ? "dashed" : "solid"},
+                        description: r.description || "", evidence: r.evidence || ""
+                    };
+                });
+                myChart.setOption({
+                    backgroundColor: "transparent",
+                    tooltip: {trigger: "item", backgroundColor: "rgba(30,41,59,0.95)",
+                        borderColor: "#475569", textStyle: {color: "#f1f5f9", fontSize: 12},
+                        extraCssText: "border-radius:8px;max-width:320px;",
+                        formatter: function (p) {
+                            if (p.dataType === "node") {
+                                var h = "<b>" + p.name + "</b>";
+                                if (p.data.value) h += "<br><span style='font-size:12px;opacity:.8'>" + p.data.value.substring(0, 150) + "</span>";
+                                return h;
+                            }
+                            if (p.dataType === "edge") {
+                                var h = "<b>" + p.data.source + " → " + p.data.target + "</b>";
+                                h += "<br><span style='font-size:12px;opacity:.7'>关系: " + p.data.value + "</span>";
+                                if (p.data.description) h += "<br><span style='font-size:12px'>" + p.data.description.substring(0, 120) + "</span>";
+                                return h;
+                            }
+                            return p.name;
+                        }
+                    },
+                    legend: {data: ["核心", "重要", "参考"], bottom: 5, textStyle: {fontSize: 11, color: legendColor}},
+                    series: [{
+                        type: "graph", layout: "force", data: nodes, links: links,
+                        categories: [{name: "核心", itemStyle: {color: "#ef4444"}}, {name: "重要", itemStyle: {color: "#f59e0b"}}, {name: "参考", itemStyle: {color: "#10b981"}}],
+                        roam: true, label: {show: true, position: "right", fontSize: 11, color: labelColor,
+                            backgroundColor: labelBg, padding: [2, 5], borderRadius: 3, borderColor: "transparent",
+                            /* C4: 标签防截断，超过 8 字符截断+省略号 */
+                            overflow: "truncate", width: 100,
+                            formatter: function(p) { var n = p.data.name || p.name; return n.length > 8 ? n.substring(0, 7) + "…" : n; }},
+                        labelLayout: {hideOverlap: true, moveOverlap: "shiftY"},
+                        force: {repulsion: 420, edgeLength: [100, 220], gravity: 0.06, friction: 0.6, layoutAnimation: true},
+                        lineStyle: {color: "source", width: 2, opacity: 0.55, curveness: 0.15},
+                        emphasis: {focus: "adjacency", lineStyle: {width: 4, opacity: 1}, label: {fontSize: 13, fontWeight: "bold"}},
+                        edgeSymbol: ["none", "arrow"], edgeSymbolSize: [0, 8]
+                    }]
+                });
+
+                /* 节点点击：跳转到概念卡片并高亮 */
+                myChart.on("click", function (params) {
+                    if (params.dataType !== "node") return;
+                    var nodeName = params.name;
+                    if (!nodeName) return;
+
+                    /* 切换到概念卡片面板 */
+                    var conceptsTab = kcEl.querySelector('.km-subtab[data-km-tab="concepts"]');
+                    if (conceptsTab) conceptsTab.click();
+
+                    /* 延迟等待面板切换完成后高亮 */
+                    setTimeout(function () {
+                        var cards = kcEl.querySelectorAll(".concept-card");
+                        var target = null;
+                        for (var i = 0; i < cards.length; i++) {
+                            var h3 = cards[i].querySelector("h3");
+                            var cardName = h3 ? h3.childNodes[0].nodeValue.trim() : "";
+                            if (cardName === nodeName) {
+                                target = cards[i];
+                                break;
+                            }
+                        }
+                        if (target) {
+                            target.scrollIntoView({ behavior: "smooth", block: "center" });
+                            target.classList.add("concept-highlight");
+                            setTimeout(function () { target.classList.remove("concept-highlight"); }, 2000);
+                        }
+                    }, 120);
+                });
+
+                /* resize 节流 */
+                var resizeTimer;
+                var resizeHandler = function () {
+                    clearTimeout(resizeTimer);
+                    resizeTimer = setTimeout(function () { myChart.resize(); }, 150);
+                };
+                chartDom._resizeHandler = resizeHandler;
+                window.addEventListener("resize", resizeHandler);
+
+                /* 重置视图按钮：恢复缩放和位置 */
+                var resetBtn = chartDom.parentElement.querySelector(".graph-reset-btn");
+                if (resetBtn) {
+                    resetBtn.addEventListener("click", function () {
+                        myChart.setOption({ series: [{ zoom: 1, center: ["50%", "50%"] }] });
+                        myChart.dispatchAction({ type: "restore" });
+                    });
+                }
+            });
+        };
+
+        // ==================================================================
+        // 5. 首页 Hero 按钮与配置链接
+        // ==================================================================
+        var heroUploadBtn = $("hero-upload-btn");
+        if (heroUploadBtn) heroUploadBtn.addEventListener("click", function (e) {
+            e.preventDefault();
+            var dz = $("drop-zone");
+            if (dz) dz.scrollIntoView({ behavior: "smooth" });
+        });
+
+        // 首页"配置 API Key"快捷链接 → 切换到设置标签页
+        document.querySelectorAll('[data-tab="settings"]').forEach(function (el) {
+            if (el.classList && el.classList.contains("nav-link")) return;
+            el.addEventListener("click", function (e) {
+                e.preventDefault();
+                var link = document.querySelector('.nav-link[data-tab="settings"]');
+                if (link) link.click();
+            });
+        });
+
+        // ==================================================================
+        // 6. 导航钩子：切换到设置标签页时加载增强设置
+        //    使用事件委托，确保 app.js 重建 .header-nav 后仍能生效。
+        // ==================================================================
+        var navEl = document.querySelector(".tab-nav") || document.querySelector(".header-nav");
+        if (navEl) {
+            navEl.addEventListener("click", function (e) {
+                var link = e.target.closest && e.target.closest(".nav-link");
+                if (!link) return;
+                if (link.dataset.tab === "settings") loadSettings();
+            });
+        }
+
+        // ==================================================================
+        // 7. 底部导航栏交互
+        // ==================================================================
+        var bottomNav = document.querySelector(".bottom-nav");
+        if (bottomNav) {
+            bottomNav.addEventListener("click", function (e) {
+                var item = e.target.closest && e.target.closest(".bottom-nav-item");
+                if (!item) return;
+                /* S1-BUG1: 阻止事件冒泡，防止全局handler重复触发switchTab */
+                e.preventDefault();
+                e.stopPropagation();
+
+                // #122: "+" 按钮为独立操作（无 data-tab），导航到首页并滚动到上传区域
+                if (item.id === "bottom-nav-add") {
+                    if (window.Router) {
+                        Router.navigate("home");
+                    } else {
+                        var navLinkHome = document.querySelector('.nav-link[data-tab="home"]');
+                        if (navLinkHome) navLinkHome.click();
+                    }
+                    setTimeout(function() {
+                        var dz = document.querySelector("#drop-zone");
+                        if (dz) dz.scrollIntoView({ behavior: "smooth" });
+                    }, 100);
+                    return;
+                }
+
+                var tab = item.dataset.tab;
+                if (!tab) return;
+                
+                /* S1-BUG1/4: 统一通过 Router.navigate 切换Tab，确保URL同步和状态一致 */
+                if (window.Router && typeof Router.navigate === "function") {
+                    Router.navigate(tab);
+                } else {
+                    /* 回退：直接调用 switchTab */
+                    var navLink = document.querySelector('.nav-link[data-tab="' + tab + '"]');
+                    if (navLink) navLink.click();
+                }
+            });
+            
+            // 同步顶部导航和底部导航的激活状态
+            var topNav = document.querySelector(".tab-nav") || document.querySelector(".header-nav");
+            if (topNav) {
+                topNav.addEventListener("click", function (e) {
+                    var link = e.target.closest && e.target.closest(".nav-link");
+                    if (!link) return;
+                    var tab = link.dataset.tab;
+                    bottomNav.querySelectorAll(".bottom-nav-item").forEach(function (n) {
+                        n.classList.toggle("active", n.dataset.tab === tab && n.id !== "bottom-nav-add");
+                    });
+                });
+            }
+        }
+
+        // 搜索框功能：搜索任务并跳转
+        var searchInput = document.getElementById("header-search-input");
+        if (searchInput) {
+            searchInput.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    var query = searchInput.value.trim().toLowerCase();
+                    if (!query) return;
+                    /* 搜索任务列表 */
+                    fetchJSON(API_BASE + "/jobs/").then(function (data) {
+                        var jobs = (data && data.jobs) || [];
+                        var matched = jobs.filter(function (j) {
+                            return (j.book_title || "").toLowerCase().indexOf(query) >= 0 ||
+                                   (j.book_filename || "").toLowerCase().indexOf(query) >= 0;
+                        });
+                        if (matched.length > 0) {
+                            /* 切换到任务页并高亮匹配项 */
+                            var navLink = document.querySelector('[data-tab="jobs"]');
+                            if (navLink) navLink.click();
+                            setTimeout(function () {
+                                var items = document.querySelectorAll(".job-item");
+                                items.forEach(function (item) {
+                                    var text = item.textContent.toLowerCase();
+                                    if (text.indexOf(query) >= 0) {
+                                        item.style.boxShadow = "0 0 0 2px var(--color-primary)";
+                                        item.scrollIntoView({ behavior: "smooth", block: "center" });
+                                        setTimeout(function () { item.style.boxShadow = ""; }, 3000);
+                                    }
+                                });
+                            }, 1000);
+                            toast("找到 " + matched.length + " 个匹配任务", "success");
+                        } else {
+                            toast("未找到匹配 \"" + query + "\" 的任务", "info");
+                        }
+                    }).catch(function () {
+                        toast("搜索失败，请稍后重试", "error");
+                    });
+                }
+            });
+        }
+    })();
+
+    /* Service Worker 注册（PWA 离线支持） */
+    if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+            navigator.serviceWorker.register("/static/sw.js").catch(function () {
+                /* 静默失败：SW 注册失败不影响正常使用 */
+            });
+        });
+    }
+    </script>
+</body>
+</html>

@@ -1,0 +1,177 @@
+"""文本分块器：将 ``ParsedDocument`` 拆分为 ``TextChunk`` 列表。
+
+策略：按章节 → 小节 → 段落逐级切分，在 token 预算内累积段落，
+超出预算时输出当前块并以 overlap 回溯。token 估算优先用 tiktoken，
+回退到字符数近似。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from book_dismantler.core.logging import get_logger
+from book_dismantler.domain.chunk import TextChunk
+from book_dismantler.domain.document import ParsedDocument
+
+logger = get_logger("parsing.chunker")
+
+# tiktoken 可选依赖，懒加载以避免无网络环境下 get_encoding 挂起
+_ENCODER: Any = None
+_ENCODER_TRIED = False
+
+
+def _get_encoder() -> Any:
+    """懒加载 tiktoken 编码器，带 3 秒超时保护。
+
+    无网络时 get_encoding 会尝试下载编码文件并永久挂起，
+    因此用线程超时包裹，失败则回退到字符数估算。
+    """
+    global _ENCODER, _ENCODER_TRIED
+    if _ENCODER_TRIED:
+        return _ENCODER
+    _ENCODER_TRIED = True
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+
+        import tiktoken
+
+        def _load() -> Any:
+            return tiktoken.get_encoding("cl100k_base")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_load)
+            _ENCODER = future.result(timeout=1.5)
+        logger.debug("tiktoken 编码器加载成功")
+    except Exception:  # pragma: no cover
+        logger.debug("tiktoken 不可用或加载超时，回退到字符数估算 token")
+        _ENCODER = None
+    return _ENCODER
+
+
+def estimate_tokens(text: str) -> int:
+    """估算文本 token 数。
+
+    优先用 tiktoken 精确计算，回退到字符数 / 1.5（中文近似）。
+    """
+    enc = _get_encoder()
+    if enc is not None:
+        return len(enc.encode(text))
+    # 中英文混合近似：字符数 / 1.5
+    return max(1, int(len(text) / 1.5))
+
+
+class Chunker:
+    """文档分块器。
+
+    Attributes:
+        chunk_size: 目标 token 数。
+        overlap: 块间重叠 token 数。
+    """
+
+    def __init__(self, chunk_size: int = 2000, overlap: int = 200) -> None:
+        if chunk_size <= 0:
+            raise ValueError("chunk_size 必须大于 0")
+        if overlap < 0 or overlap >= chunk_size:
+            raise ValueError("overlap 必须 >= 0 且 < chunk_size")
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    def chunk_document(self, doc: ParsedDocument) -> list[TextChunk]:
+        """将 ``ParsedDocument`` 拆分为 ``TextChunk`` 列表。
+
+        Args:
+            doc: 解析后的文档。
+
+        Returns:
+            文本块列表，按章节顺序排列。
+        """
+        chunks: list[TextChunk] = []
+        global_idx = 0
+
+        for chapter in doc.chapters:
+            for section_idx, section in enumerate(chapter.sections):
+                buffer: list[str] = []
+                buffer_tokens = 0
+
+                for para in section.paragraphs:
+                    para_text = para.text
+                    para_tokens = estimate_tokens(para_text)
+
+                    if buffer_tokens + para_tokens > self.chunk_size and buffer:
+                        # 输出当前块
+                        text = "\n\n".join(buffer)
+                        chunks.append(self._make_chunk(
+                            text=text,
+                            chapter_index=chapter.index,
+                            chapter_title=chapter.title,
+                            section_index=section_idx,
+                            chunk_index=global_idx,
+                        ))
+                        global_idx += 1
+
+                        # overlap：回溯最后几个段落
+                        buffer, buffer_tokens = self._apply_overlap(buffer)
+
+                    buffer.append(para_text)
+                    buffer_tokens += para_tokens
+
+                # 输出剩余
+                if buffer:
+                    text = "\n\n".join(buffer)
+                    chunks.append(self._make_chunk(
+                        text=text,
+                        chapter_index=chapter.index,
+                        chapter_title=chapter.title,
+                        section_index=section_idx,
+                        chunk_index=global_idx,
+                    ))
+                    global_idx += 1
+
+        logger.info(
+            "分块完成: %d 块 (目标 %d tokens, 重叠 %d)",
+            len(chunks),
+            self.chunk_size,
+            self.overlap,
+        )
+        return chunks
+
+    def _make_chunk(
+        self,
+        text: str,
+        chapter_index: int,
+        chapter_title: str,
+        section_index: int | None,
+        chunk_index: int,
+    ) -> TextChunk:
+        """构造 TextChunk。"""
+        return TextChunk(
+            text=text,
+            chapter_index=chapter_index,
+            chapter_title=chapter_title,
+            section_index=section_index,
+            chunk_index=chunk_index,
+            token_estimate=estimate_tokens(text),
+            char_count=len(text),
+        )
+
+    def _apply_overlap(self, buffer: list[str]) -> tuple[list[str], int]:
+        """回溯若干段落实现重叠。
+
+        Returns:
+            (保留的段落列表, 保留段落的 token 总数)
+        """
+        if self.overlap <= 0:
+            return [], 0
+
+        kept: list[str] = []
+        kept_tokens = 0
+        # 从后往前累积，直到达到 overlap 预算
+        for para in reversed(buffer):
+            tokens = estimate_tokens(para)
+            if kept_tokens + tokens > self.overlap:
+                break
+            kept.insert(0, para)
+            kept_tokens += tokens
+
+        return kept, kept_tokens

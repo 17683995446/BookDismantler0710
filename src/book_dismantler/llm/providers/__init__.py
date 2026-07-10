@@ -1,0 +1,5 @@
+"""LLM Provider 实现集合。"""
+
+from book_dismantler.llm.providers.openai_provider import OpenAICompatibleProvider
+
+__all__ = ["OpenAICompatibleProvider"]

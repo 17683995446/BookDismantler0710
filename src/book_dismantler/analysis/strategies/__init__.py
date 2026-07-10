@@ -1,0 +1,75 @@
+"""分析策略基类。"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from book_dismantler.domain.chunk import TextChunk
+from book_dismantler.domain.knowledge import KnowledgeModel
+from book_dismantler.llm.base import LLMClient
+
+
+class AnalysisStrategy(ABC):
+    """分析策略抽象基类。
+
+    每个策略负责一种知识抽取维度（大纲/概念/关系/解剖），
+    接收一个 TextChunk，返回部分 KnowledgeModel。
+    """
+
+    def __init__(self, client: LLMClient, book_title: str = "") -> None:
+        self.client = client
+        self.book_title = book_title
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """策略名称。"""
+        ...
+
+    @property
+    @abstractmethod
+    def prompt_template(self) -> str:
+        """提示词模板文件名。"""
+        ...
+
+    @property
+    def response_schema(self) -> dict[str, Any]:
+        """期望的 JSON 输出 Schema。默认为空（纯文本）。"""
+        return {}
+
+    @abstractmethod
+    def analyze(self, chunk: TextChunk) -> KnowledgeModel:
+        """分析单个文本块。
+
+        Args:
+            chunk: 文本块。
+
+        Returns:
+            包含该块分析结果的部分 KnowledgeModel。
+        """
+        ...
+
+    def _render_prompt(self, **variables: Any) -> str:
+        """渲染提示词模板。"""
+        from book_dismantler.analysis.prompts import render_prompt
+
+        return render_prompt(self.prompt_template, **variables)
+
+    def _call_llm(self, prompt: str) -> dict[str, Any] | None:
+        """调用 LLM 并返回解析后的 JSON。"""
+        from book_dismantler.llm.messages import build_messages
+
+        messages = build_messages(
+            system_prompt="你是一位专业的书籍知识分析师。请按要求输出结构化 JSON。",
+            user_content=prompt,
+        )
+
+        response = self.client.complete(
+            messages,
+            response_schema=self.response_schema if self.response_schema else None,
+            temperature=0.3,
+            max_tokens=4096,
+        )
+
+        return response.parsed

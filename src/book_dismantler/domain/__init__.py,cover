@@ -1,0 +1,22 @@
+> """领域模型：纯数据结构，零 IO 依赖。
+  
+> 所有跨层数据通过 Pydantic 模型定义，确保序列化、校验、文档一体化。
+> """
+  
+> from book_dismantler.domain.chunk import TextChunk
+> from book_dismantler.domain.document import (
+>     Chapter,
+>     Metadata,
+>     Paragraph,
+>     ParsedDocument,
+>     Section,
+> )
+  
+> __all__ = [
+>     "Metadata",
+>     "Paragraph",
+>     "Section",
+>     "Chapter",
+>     "ParsedDocument",
+>     "TextChunk",
+> ]

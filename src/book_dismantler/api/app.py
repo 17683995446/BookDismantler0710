@@ -1,0 +1,219 @@
+"""FastAPI 应用工厂。"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from book_dismantler.api.routers import artifacts, books, jobs
+from book_dismantler.api.routers import settings as settings_router
+from book_dismantler.core.exceptions import BookDismantlerError
+from book_dismantler.core.logging import (
+    clear_trace_id,
+    get_logger,
+    get_trace_id,
+    set_trace_id,
+    setup_logging,
+)
+
+logger = get_logger("api")
+
+
+def create_app() -> FastAPI:
+    """创建并配置 FastAPI 应用。"""
+    setup_logging()
+
+    # 启动时自动加载示例书籍
+    from book_dismantler.api.routers.books import _ensure_sample_books_loaded
+    _ensure_sample_books_loaded()
+
+    app = FastAPI(
+        title="Book Dismantler API",
+        description=(
+            "AI 驱动的开源拆书工具 API。\n\n"
+            "## 主要能力\n"
+            "- **书籍管理**：上传/列出/选择 PDF 与 EPUB 样本\n"
+            "- **拆解任务**：异步执行大纲、概念、关系、解剖的 LLM 分析\n"
+            "- **产物生成**：Markdown 笔记、Org-mode 笔记、思维导图、知识卡片、图谱\n"
+            "- **运行设置**：临时覆盖 Provider/API Key/默认模型（不写入 .env）\n\n"
+            "## 任务状态机\n"
+            "pending → running → done / failed / cancelled\n\n"
+            "## 错误响应\n"
+            "所有错误统一为：`{code, message, details, trace_id}`，trace_id 可用于日志关联。"
+        ),
+        version="0.1.0",
+        openapi_tags=[
+            {"name": "books", "description": "书籍管理：上传、列出、选择示例"},
+            {"name": "jobs", "description": "拆解任务：创建、查询、取消、删除"},
+            {"name": "artifacts", "description": "产物获取：列表/下载/导出 ZIP"},
+            {"name": "settings", "description": "运行时设置：Provider/Key/Model"},
+        ],
+    )
+
+    # CORS —— 默认仅允许本地访问，可通过环境变量 BD_CORS_ORIGINS 扩展
+    cors_env = os.environ.get("BD_CORS_ORIGINS", "")
+    if cors_env:
+        allow_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+    else:
+        allow_origins = [
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost:3000",
+        ]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["*"],
+    )
+
+    # ---- 中间件：trace_id + 请求日志 ----
+    @app.middleware("http")
+    async def trace_and_log_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable]
+    ):
+        """为每个请求生成/传递 trace_id，并记录耗时。"""
+        incoming = request.headers.get("X-Trace-Id")
+        trace_id = set_trace_id(incoming or uuid.uuid4().hex[:8])
+        start = time.time()
+        try:
+            response = await call_next(request)
+        except Exception as exc:  # 兜底异常处理
+            duration_ms = int((time.time() - start) * 1000)
+            logger.exception(
+                "request_failed",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_ms": duration_ms,
+                },
+            )
+            clear_trace_id()
+            return _error_response(exc, trace_id)
+        duration_ms = int((time.time() - start) * 1000)
+        response.headers["X-Trace-Id"] = trace_id
+        if request.url.path != "/health":
+            logger.info(
+                "request_done",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": response.status_code,
+                    "duration_ms": duration_ms,
+                },
+            )
+        clear_trace_id()
+        return response
+
+    # ---- 全局异常处理 ----
+    @app.exception_handler(BookDismantlerError)
+    async def domain_exception_handler(request: Request, exc: BookDismantlerError) -> JSONResponse:
+        """将领域异常序列化为统一错误响应。"""
+        logger.warning(
+            "domain_error",
+            extra={
+                "code": exc.code,
+                "status": exc.http_status,
+                "path": request.url.path,
+            },
+        )
+        return _error_response(exc, get_trace_id() or "-")
+
+    # 路由
+    app.include_router(books.router, prefix="/api/books", tags=["books"])
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+    app.include_router(artifacts.router, prefix="/api/artifacts", tags=["artifacts"])
+    app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
+
+    # 静态文件（前端 UI）
+    web_dir = Path(__file__).resolve().parent.parent / "web"
+    static_dir = web_dir / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    # 首页
+    from fastapi.responses import HTMLResponse
+
+    index_path = web_dir / "templates" / "index.html"
+    if index_path.exists():
+        @app.get("/", response_class=HTMLResponse)
+        async def index() -> str:
+            return index_path.read_text(encoding="utf-8")
+    else:
+        @app.get("/")
+        async def index_fallback() -> dict[str, str]:
+            return {"message": "Book Dismantler API", "docs": "/docs"}
+
+    # ---- 健康检查（增强版） ----
+    @app.get("/health")
+    async def health() -> JSONResponse:
+        """返回完整健康状态：基础 ok 状态、磁盘空间、活跃 job 数。"""
+        try:
+            from book_dismantler.api.routers.jobs import get_job_store
+        except ImportError:
+            get_job_store = None  # type: ignore[assignment]
+
+        try:
+            upload_dir = Path(__file__).resolve().parent.parent.parent / "output" / "uploads"
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            disk = shutil.disk_usage(upload_dir)
+            disk_free_gb = round(disk.free / (1024 ** 3), 2)
+        except Exception:
+            disk_free_gb = None
+
+        jobs_count = None
+        active_count = None
+        if get_job_store is not None:
+            try:
+                store = get_job_store()
+                jobs_count = len(getattr(store, "jobs", {}))
+                active_count = sum(
+                    1 for j in getattr(store, "jobs", {}).values()
+                    if str(getattr(j, "status", "")) in ("running", "pending")
+                )
+            except Exception:
+                pass
+
+        body = {
+            "status": "ok",
+            "version": "0.1.0",
+            "disk_free_gb": disk_free_gb,
+            "jobs_total": jobs_count,
+            "jobs_active": active_count,
+        }
+        return JSONResponse(body)
+
+    return app
+
+
+def _error_response(exc: Exception, trace_id: str) -> JSONResponse:
+    """将异常序列化为统一错误响应结构。"""
+    if isinstance(exc, BookDismantlerError):
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+                "trace_id": trace_id,
+            },
+        )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": "INTERNAL_ERROR",
+            "message": str(exc) or "服务器内部错误",
+            "details": {},
+            "trace_id": trace_id,
+        },
+    )

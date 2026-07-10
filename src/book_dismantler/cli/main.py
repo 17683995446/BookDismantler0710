@@ -1,0 +1,315 @@
+"""Typer CLI：命令行驱动拆书工具。
+
+子命令：
+    dismantle <book>   一键拆书，生成全套知识产物
+    parse <book>       仅解析文档
+    analyze <doc.json> 仅执行 AI 分析
+    render <model.json> 仅渲染产物
+    serve              启动 Web UI 和 API 服务
+    providers list     列出可用 LLM provider
+    providers test     测试 provider 连通性
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import typer
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
+
+from book_dismantler.core.config import Settings, get_settings
+from book_dismantler.core.exceptions import BookDismantlerError
+from book_dismantler.core.logging import get_logger, setup_logging
+from book_dismantler.domain.document import ParsedDocument
+from book_dismantler.domain.knowledge import KnowledgeModel
+
+app = typer.Typer(
+    name="book-dismantler",
+    help="AI 驱动的开源拆书工具：电子书 → 思维导图/知识卡片/信息图/笔记",
+    no_args_is_help=True,
+    invoke_without_command=True,
+)
+providers_app = typer.Typer(help="LLM Provider 管理")
+app.add_typer(providers_app, name="providers")
+
+console = Console()
+logger = get_logger("cli")
+
+
+def _get_settings(config: str | None = None, **overrides: Any) -> Settings:
+    """获取配置。"""
+    # TODO: 阶段 8 支持 YAML 配置文件加载
+    return get_settings()
+
+
+@app.command()
+def dismantle(
+    book: str = typer.Argument(..., help="电子书文件路径（PDF/EPUB）"),
+    output: str = typer.Option(None, "--output", "-o", help="输出目录"),
+    provider: str = typer.Option(None, "--provider", "-p", help="LLM provider"),
+    model: str = typer.Option(None, "--model", "-m", help="模型名"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="详细日志"),
+) -> None:
+    """一键拆书：电子书 → 全套知识产物。"""
+    settings = _get_settings()
+    if verbose:
+        settings.log_level = "DEBUG"
+    setup_logging(settings.log_level)
+
+    if provider:
+        settings.default_provider = provider
+    if model:
+        settings.default_model = model
+
+    from book_dismantler.application.runner import DismantleRunner
+
+    try:
+        runner = DismantleRunner(settings=settings)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("拆书中...", total=None)
+
+            def on_progress(current: int, total: int, chunk: int) -> None:
+                progress.update(task, description=f"分析中 {current}/{total} 块")
+
+            result = runner.run(book, output_dir=output, on_progress=on_progress)
+            progress.update(task, description="完成！")
+
+        # 输出结果摘要
+        console.print()
+        console.print("[bold green]✓ 拆书完成！[/bold green]")
+        console.print(f"  书名：{result.book_title}")
+        console.print(f"  产物目录：{result.output_dir}")
+        if result.knowledge_model:
+            km = result.knowledge_model
+            console.print(
+                f"  概念：{km.concept_count} | "
+                f"关系：{km.relationship_count} | "
+                f"大纲节点：{km.outline_node_count}"
+            )
+        console.print(f"  产物数量：{len(result.artifacts)}")
+
+        table = Table(title="产物清单")
+        table.add_column("类型", style="cyan")
+        table.add_column("标题")
+        for artifact in result.artifacts:
+            table.add_row(artifact.artifact_type.value, artifact.title)
+        console.print(table)
+
+    except BookDismantlerError as e:
+        console.print(f"[bold red]✗ 错误：[/bold red]{e}")
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        console.print(f"[bold red]✗ 未预期错误：[/bold red]{e}")
+        logger.exception("未预期错误")
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def parse(
+    book: str = typer.Argument(..., help="电子书文件路径"),
+    output: str = typer.Option(None, "--output", "-o", help="输出 JSON 路径"),
+) -> None:
+    """仅解析文档，输出 ParsedDocument JSON。"""
+    setup_logging()
+    try:
+        from book_dismantler.application.runner import DismantleRunner
+
+        runner = DismantleRunner()
+        doc = runner.parse_only(book)
+
+        json_str = doc.model_dump_json(indent=2)
+        if output:
+            Path(output).write_text(json_str, encoding="utf-8")
+            console.print(f"[green]✓ 解析结果已保存：{output}[/green]")
+        else:
+            console.print(json_str)
+
+        console.print(
+            f"\n[dim]章节：{doc.chapter_count} | "
+            f"段落：{doc.total_paragraphs} | "
+            f"字符：{doc.total_chars}[/dim]"
+        )
+    except BookDismantlerError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def analyze(
+    doc_json: str = typer.Argument(..., help="ParsedDocument JSON 文件路径"),
+    output: str = typer.Option(None, "--output", "-o", help="输出 JSON 路径"),
+    provider: str = typer.Option(None, "--provider", "-p"),
+) -> None:
+    """仅执行 AI 分析，输入 ParsedDocument JSON。"""
+    setup_logging()
+    try:
+        settings = _get_settings()
+        if provider:
+            settings.default_provider = provider
+
+        doc = ParsedDocument.model_validate_json(
+            Path(doc_json).read_text(encoding="utf-8")
+        )
+
+        from book_dismantler.application.runner import DismantleRunner
+
+        runner = DismantleRunner(settings=settings)
+        model = runner.analyze_only(doc)
+
+        json_str = model.model_dump_json(indent=2)
+        if output:
+            Path(output).write_text(json_str, encoding="utf-8")
+            console.print(f"[green]✓ 分析结果已保存：{output}[/green]")
+        else:
+            console.print(json_str)
+
+        console.print(
+            f"\n[dim]概念：{model.concept_count} | "
+            f"关系：{model.relationship_count}[/dim]"
+        )
+    except BookDismantlerError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def render(
+    model_json: str = typer.Argument(..., help="KnowledgeModel JSON 文件路径"),
+    output: str = typer.Option(None, "--output", "-o", help="输出目录"),
+) -> None:
+    """仅渲染产物，输入 KnowledgeModel JSON。"""
+    setup_logging()
+    try:
+        model = KnowledgeModel.model_validate_json(
+            Path(model_json).read_text(encoding="utf-8")
+        )
+
+        from book_dismantler.application.runner import DismantleRunner
+
+        runner = DismantleRunner()
+        artifacts = runner.render_only(model)
+
+        out_dir = Path(output) if output else Path("./output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        for artifact in artifacts:
+            filename = f"{artifact.artifact_type.value}.html"
+            if "markdown" in artifact.artifact_type.value:
+                filename = "notes.md"
+            elif "org" in artifact.artifact_type.value:
+                filename = "notes.org"
+            (out_dir / filename).write_text(artifact.content, encoding="utf-8")
+            console.print(f"[green]✓[/green] {filename}")
+
+        console.print(f"\n[bold]产物目录：{out_dir}[/bold]")
+    except BookDismantlerError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        raise typer.Exit(code=1) from e
+
+
+@providers_app.command("list")
+def providers_list() -> None:
+    """列出可用 LLM provider。"""
+    settings = _get_settings()
+
+    table = Table(title="可用 LLM Provider")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Base URL")
+    table.add_column("API Key", style="yellow")
+    table.add_column("默认模型")
+
+    providers = ["openai", "deepseek", "gemini", "ollama", "siliconflow"]
+    for name in providers:
+        try:
+            config = settings.get_provider_config(name)
+            key_status = "✓ 已配置" if config["api_key"] else "✗ 未配置"
+            if name == "ollama":
+                key_status = "无需"
+            table.add_row(name, config["base_url"], key_status, settings.default_model)
+        except ValueError:
+            table.add_row(name, "-", "✗ 未知", "-")
+
+    console.print(table)
+
+
+@providers_app.command("test")
+def providers_test(
+    provider: str = typer.Option(None, "--provider", "-p", help="指定 provider"),
+) -> None:
+    """测试 provider 连通性。"""
+    settings = _get_settings()
+    target = provider or settings.default_provider
+
+    console.print(f"测试 provider: [cyan]{target}[/cyan]...")
+
+    try:
+        from book_dismantler.llm.base import Message
+        from book_dismantler.llm.factory import create_client
+
+        client = create_client(provider=target, settings=settings)
+        response = client.complete(
+            [Message(role="user", content="请回复'连接成功'四个字。")],
+            temperature=0.0,
+            max_tokens=20,
+        )
+        console.print("[green]✓ 连接成功！[/green]")
+        console.print(f"  响应：{response.raw_content[:100]}")
+        console.print(f"  模型：{response.model}")
+        if response.usage.total_tokens:
+            console.print(f"  Token：{response.usage.total_tokens}")
+    except BookDismantlerError as e:
+        console.print(f"[red]✗ 连接失败：[/red]{e}")
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="监听地址"),
+    port: int = typer.Option(8000, "--port", "-p", help="监听端口"),
+    reload: bool = typer.Option(False, "--reload", help="热重载（开发模式）"),
+) -> None:
+    """启动 Web UI 和 API 服务。"""
+    setup_logging()
+    console.print("[cyan]启动 Book Dismantler Web 服务...[/cyan]")
+    console.print(f"  地址：http://{host}:{port}")
+    console.print(f"  文档：http://{host}:{port}/docs")
+    console.print()
+
+    try:
+        import uvicorn
+
+        uvicorn.run(
+            "book_dismantler.api.app:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=reload,
+        )
+    except ImportError:
+        console.print("[red]✗ 需要安装 web 依赖：pip install -e '.[web]'[/red]")
+        raise typer.Exit(code=1) from None
+
+
+@app.callback()
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(False, "--version", help="显示版本号"),
+) -> None:
+    """book-dismantler: AI 驱动的开源拆书工具。"""
+    if version:
+        from book_dismantler import __version__
+
+        console.print(f"book-dismantler v{__version__}")
+        raise typer.Exit()
+
+
+if __name__ == "__main__":
+    app()

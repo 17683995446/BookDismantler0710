@@ -1,0 +1,139 @@
+"""PNG 导出器：基于 Playwright 的 HTML→PNG 截图。
+
+支持整页截图、元素截图、多分辨率（DPI）导出。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from book_dismantler.core.exceptions import ExportError
+from book_dismantler.core.logging import get_logger
+
+logger = get_logger("export.png")
+
+
+class PngExporter:
+    """HTML→PNG 导出器。
+
+    使用 Playwright 无头浏览器渲染 HTML 并截图为 PNG。
+    支持 device_scale_factor 控制清晰度。
+
+    Attributes:
+        scale: 缩放因子（1=标准, 2=高清）。
+    """
+
+    def __init__(self, scale: float = 2.0) -> None:
+        self.scale = scale
+        self._playwright: Any = None
+        self._browser: Any = None
+
+    async def _ensure_browser(self) -> Any:
+        """懒初始化 Playwright 浏览器。"""
+        if self._browser is not None:
+            return self._browser
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as e:
+            raise ExportError(
+                "缺少 playwright 依赖，请安装: "
+                "pip install playwright && playwright install chromium"
+            ) from e
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch()
+        return self._browser
+
+    async def export_html_to_png(
+        self,
+        html_content: str,
+        output_path: str | Path,
+        *,
+        selector: str | None = None,
+        full_page: bool = True,
+        wait_until: str = "networkidle",
+    ) -> Path:
+        """将 HTML 内容导出为 PNG。
+
+        Args:
+            html_content: HTML 字符串。
+            output_path: 输出文件路径。
+            selector: CSS 选择器，仅截图该元素（为 None 时截整页）。
+            full_page: 是否截取完整页面。
+            wait_until: 等待条件（load/domcontentloaded/networkidle）。
+
+        Returns:
+            输出文件路径。
+
+        Raises:
+            ExportError: 导出失败。
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        browser = await self._ensure_browser()
+
+        try:
+            context = await browser.new_context(
+                device_scale_factor=self.scale,
+                viewport={"width": 1200, "height": 800},
+            )
+            page = await context.new_page()
+
+            # 加载 HTML
+            await page.set_content(html_content, wait_until=wait_until)
+
+            # 等待字体加载
+            await page.evaluate("document.fonts.ready")
+
+            # 截图
+            if selector:
+                element = await page.query_selector(selector)
+                if element is None:
+                    raise ExportError(f"未找到选择器匹配的元素: {selector}")
+                await element.screenshot(path=str(output_path))
+            else:
+                await page.screenshot(
+                    path=str(output_path),
+                    full_page=full_page,
+                )
+
+            await context.close()
+            logger.info("PNG 导出成功: %s (scale=%.1f)", output_path, self.scale)
+            return output_path
+
+        except ExportError:
+            raise
+        except Exception as e:
+            raise ExportError(f"PNG 导出失败: {e}") from e
+
+    async def export_file_to_png(
+        self,
+        html_path: str | Path,
+        output_path: str | Path,
+        *,
+        selector: str | None = None,
+        full_page: bool = True,
+    ) -> Path:
+        """将 HTML 文件导出为 PNG。"""
+        html_content = Path(html_path).read_text(encoding="utf-8")
+        return await self.export_html_to_png(
+            html_content, output_path, selector=selector, full_page=full_page
+        )
+
+    async def close(self) -> None:
+        """关闭浏览器。"""
+        if self._browser:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
+
+    async def __aenter__(self) -> PngExporter:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()

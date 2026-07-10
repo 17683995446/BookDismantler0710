@@ -1,0 +1,142 @@
+> """分析流水线编排器：分块 → 多策略分析 → 聚合。"""
+  
+> from __future__ import annotations
+  
+> from concurrent.futures import ThreadPoolExecutor, as_completed
+> from typing import Any
+  
+> from book_dismantler.analysis.aggregator import Aggregator
+> from book_dismantler.analysis.strategies import AnalysisStrategy
+> from book_dismantler.core.exceptions import AnalysisError, JobCancelledError
+> from book_dismantler.core.logging import get_logger
+> from book_dismantler.domain.chunk import TextChunk
+> from book_dismantler.domain.document import ParsedDocument
+> from book_dismantler.domain.knowledge import KnowledgeModel
+> from book_dismantler.llm.base import LLMClient
+> from book_dismantler.parsing.chunker import Chunker
+  
+> logger = get_logger("analysis.pipeline")
+  
+  
+> class AnalysisPipeline:
+>     """AI 拆书分析流水线。
+  
+>     编排：文档 → 分块 → 多策略分析 → 聚合 → KnowledgeModel。
+>     支持并发、容错、进度回调。
+>     """
+  
+>     def __init__(
+>         self,
+>         client: LLMClient,
+>         strategies: list[AnalysisStrategy],
+>         *,
+>         chunk_size: int = 2000,
+>         chunk_overlap: int = 200,
+>         max_concurrent: int = 4,
+>     ) -> None:
+>         self.client = client
+>         self.strategies = strategies
+>         self.chunker = Chunker(chunk_size=chunk_size, overlap=chunk_overlap)
+>         self.max_concurrent = max_concurrent
+  
+>     def run(
+>         self,
+>         document: ParsedDocument,
+>         *,
+>         on_progress: Any = None,
+>         cancel_check: Any = None,
+>     ) -> KnowledgeModel:
+>         """执行完整拆书分析流水线。
+  
+>         Args:
+>             document: 解析后的文档。
+>             on_progress: 可选进度回调 ``callback(current, total, chunk_index)``。
+>             cancel_check: 可选取消检查 ``fn() -> bool``，返回 True 时中止。
+  
+>         Returns:
+>             完整的 ``KnowledgeModel``。
+  
+>         Raises:
+>             AnalysisError: 分析失败。
+>             JobCancelledError: 任务被取消。
+>         """
+>         book_title = document.metadata.title
+>         book_author = document.metadata.author
+>         logger.info("开始拆书分析: %s", book_title)
+  
+          # 1. 分块
+>         chunks = self.chunker.chunk_document(document)
+>         total = len(chunks)
+>         logger.info("文档分块: %d 块", total)
+  
+>         if not chunks:
+!             logger.warning("文档无有效内容")
+!             return KnowledgeModel(book_title=book_title, book_author=book_author)
+  
+          # 2. 多策略并发分析
+>         partials: list[KnowledgeModel] = []
+>         failed_chunks: list[int] = []
+  
+>         with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+>             future_to_chunk = {
+>                 executor.submit(self._analyze_chunk, chunk): chunk
+>                 for chunk in chunks
+>             }
+  
+>             completed = 0
+>             for i, future in enumerate(as_completed(future_to_chunk)):
+                  # 在每个 chunk 完成后检查取消
+>                 if cancel_check and cancel_check():
+                      # 取消尚未完成的 future
+!                     for f in future_to_chunk:
+!                         f.cancel()
+!                     raise JobCancelledError("任务已取消")
+  
+>                 chunk = future_to_chunk[future]
+>                 try:
+>                     partial = future.result()
+>                     partials.append(partial)
+!                 except Exception as e:
+!                     logger.error("chunk #%d 分析失败: %s", chunk.chunk_index, e)
+!                     failed_chunks.append(chunk.chunk_index)
+  
+>                 completed = i + 1
+>                 if on_progress:
+!                     on_progress(completed, total, chunk.chunk_index)
+  
+>         if failed_chunks:
+!             logger.warning("失败的块: %s", failed_chunks)
+  
+>         if not partials:
+!             raise AnalysisError("所有 chunk 分析均失败")
+  
+          # 3. 聚合
+>         aggregator = Aggregator(book_title=book_title, book_author=book_author)
+>         result = aggregator.aggregate(partials)
+  
+>         logger.info(
+>             "拆书完成: %d 概念, %d 关系, %d 大纲节点, %d 解剖",
+>             result.concept_count,
+>             result.relationship_count,
+>             result.outline_node_count,
+>             len(result.anatomies),
+>         )
+>         return result
+  
+>     def _analyze_chunk(self, chunk: TextChunk) -> KnowledgeModel:
+>         """对单个 chunk 执行所有策略并合并结果。"""
+>         partial = KnowledgeModel(book_title=chunk.chapter_title)
+  
+>         for strategy in self.strategies:
+>             try:
+>                 strategy_result = strategy.analyze(chunk)
+>                 partial = partial.merge(strategy_result)
+!             except Exception as e:
+!                 logger.warning(
+!                     "策略 %s 在 chunk #%d 失败: %s",
+!                     strategy.name,
+!                     chunk.chunk_index,
+!                     e,
+!                 )
+  
+>         return partial

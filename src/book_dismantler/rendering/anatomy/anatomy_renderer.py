@@ -1,0 +1,289 @@
+"""概念多维解剖渲染器。
+
+将 ConceptAnatomy 渲染为分区式可视化图表，
+包含定义、特征、对比、应用、反例、洞察六个维度。
+"""
+
+from __future__ import annotations
+
+from book_dismantler.domain.knowledge import ConceptAnatomy, KnowledgeModel
+from book_dismantler.rendering.base import ArtifactType, RenderedArtifact, Renderer
+
+
+class AnatomyChartRenderer(Renderer):
+    """概念多维解剖图表渲染器。"""
+
+    @property
+    def artifact_type(self) -> ArtifactType:
+        return ArtifactType.ANATOMY_CHART
+
+    def render(self, model: KnowledgeModel) -> RenderedArtifact:
+        """渲染所有概念解剖为 HTML 图表。"""
+        title = f"{model.book_title} - 概念解剖" if model.book_title else "概念解剖"
+
+        charts_html = []
+        for anatomy in model.anatomies:
+            charts_html.append(self._render_anatomy(anatomy))
+
+        html = self._wrap_html(title, "\n".join(charts_html), len(model.anatomies))
+
+        return RenderedArtifact(
+            artifact_type=self.artifact_type,
+            content=html,
+            title=title,
+            metadata={"anatomy_count": len(model.anatomies)},
+        )
+
+    def _render_anatomy(self, anatomy: ConceptAnatomy) -> str:
+        """渲染单个概念解剖图表。"""
+        # 特征
+        chars_html = ""
+        if anatomy.characteristics:
+            chars_items = "".join(
+                f'<li><span class="char-num">{i+1}</span>{char}</li>'
+                for i, char in enumerate(anatomy.characteristics)
+            )
+            chars_html = f"""
+            <div class="anatomy-section">
+                <h3>🎯 核心特征</h3>
+                <ul class="characteristics-list">{chars_items}</ul>
+            </div>"""
+
+        # 对比
+        comps_html = ""
+        if anatomy.comparisons:
+            comp_items = []
+            for comp in anatomy.comparisons:
+                comp_items.append(f"""
+                <div class="comparison-row">
+                    <div class="comp-concept">{comp.concept}</div>
+                    <div class="comp-similarity">同：{comp.similarity}</div>
+                    <div class="comp-difference">异：{comp.difference}</div>
+                </div>""")
+            comps_html = f"""
+            <div class="anatomy-section">
+                <h3>⚖️ 概念对比</h3>
+                {''.join(comp_items)}
+            </div>"""
+
+        # 应用
+        apps_html = ""
+        if anatomy.applications:
+            apps_items = "".join(f"<li>📌 {app}</li>" for app in anatomy.applications)
+            apps_html = f"""
+            <div class="anatomy-section">
+                <h3>🚀 应用场景</h3>
+                <ul class="applications-list">{apps_items}</ul>
+            </div>"""
+
+        # 反例
+        counters_html = ""
+        if anatomy.counterexamples:
+            counter_items = "".join(
+                f"<li>✗ {ce}</li>" for ce in anatomy.counterexamples
+            )
+            counters_html = f"""
+            <div class="anatomy-section counter">
+                <h3>🚫 什么不属于此概念</h3>
+                <ul class="counter-list">{counter_items}</ul>
+            </div>"""
+
+        return f"""
+        <div class="anatomy-card">
+            <div class="anatomy-header">
+                <h2>🔬 {anatomy.concept}</h2>
+            </div>
+            <div class="anatomy-body">
+                <div class="anatomy-section definition-section">
+                    <h3>📝 定义</h3>
+                    <p class="definition-text">{anatomy.definition}</p>
+                </div>
+                <div class="anatomy-grid">
+                    {chars_html}
+                    {comps_html}
+                    {apps_html}
+                    {counters_html}
+                </div>
+                {self._render_insight(anatomy.insight)}
+            </div>
+        </div>"""
+
+    def _render_insight(self, insight: str) -> str:
+        """渲染洞察栏。"""
+        if not insight:
+            return ""
+        return (
+            '<div class="insight-bar">'
+            '<span class="insight-label">💡 核心洞察</span>'
+            f'<span class="insight-text">{insight}</span>'
+            '</div>'
+        )
+
+    def _wrap_html(self, title: str, charts_html: str, count: int) -> str:
+        """包裹为完整 HTML 页面。"""
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+            background: #f0ebe4;
+            padding: 32px;
+        }}
+        .page-header {{
+            text-align: center;
+            margin-bottom: 32px;
+        }}
+        .page-header h1 {{
+            font-size: 32px;
+            color: #1a7a6d;
+        }}
+        .page-header .count {{
+            color: #666;
+            font-size: 14px;
+            margin-top: 4px;
+        }}
+        .anatomy-card {{
+            max-width: 900px;
+            margin: 0 auto 32px;
+            background: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        }}
+        .anatomy-header {{
+            background: linear-gradient(135deg, #1a7a6d, #145f54);
+            padding: 24px 32px;
+        }}
+        .anatomy-header h2 {{
+            color: white;
+            font-size: 28px;
+        }}
+        .anatomy-body {{
+            padding: 32px;
+        }}
+        .anatomy-section {{
+            margin-bottom: 24px;
+        }}
+        .anatomy-section h3 {{
+            font-size: 16px;
+            color: #1a7a6d;
+            margin-bottom: 12px;
+            font-weight: 700;
+        }}
+        .definition-section {{
+            background: #f0ebe4;
+            padding: 16px 20px;
+            border-radius: 12px;
+            border-left: 4px solid #1a7a6d;
+        }}
+        .definition-text {{
+            font-size: 16px;
+            line-height: 1.7;
+            color: #333;
+        }}
+        .anatomy-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }}
+        .characteristics-list, .applications-list {{
+            list-style: none;
+            padding: 0;
+        }}
+        .characteristics-list li {{
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 0;
+            font-size: 15px;
+            color: #333;
+        }}
+        .char-num {{
+            background: #1a7a6d;
+            color: white;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            flex-shrink: 0;
+        }}
+        .comparison-row {{
+            margin-bottom: 12px;
+            padding: 12px;
+            background: #f5f1ec;
+            border-radius: 8px;
+        }}
+        .comp-concept {{
+            font-weight: 700;
+            color: #1a1a1a;
+            margin-bottom: 4px;
+        }}
+        .comp-similarity {{
+            font-size: 13px;
+            color: #059669;
+            margin-bottom: 2px;
+        }}
+        .comp-difference {{
+            font-size: 13px;
+            color: #e11d48;
+        }}
+        .applications-list li {{
+            padding: 6px 0;
+            font-size: 15px;
+            color: #333;
+        }}
+        .anatomy-section.counter {{
+            background: #fff1f2;
+            padding: 16px;
+            border-radius: 12px;
+        }}
+        .counter-list {{
+            list-style: none;
+            padding: 0;
+        }}
+        .counter-list li {{
+            padding: 4px 0;
+            font-size: 14px;
+            color: #9f1239;
+        }}
+        .insight-bar {{
+            background: linear-gradient(135deg, #e8713a, #d97706);
+            padding: 16px 24px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 24px;
+        }}
+        .insight-label {{
+            color: white;
+            font-weight: 700;
+            font-size: 14px;
+            white-space: nowrap;
+        }}
+        .insight-text {{
+            color: white;
+            font-size: 16px;
+            font-style: italic;
+        }}
+        @media (max-width: 768px) {{
+            .anatomy-grid {{ grid-template-columns: 1fr; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <h1>{title}</h1>
+        <div class="count">共 {count} 个概念解剖</div>
+    </div>
+    {charts_html}
+</body>
+</html>"""

@@ -1,0 +1,5 @@
+> """渲染层：将 KnowledgeModel 转换为多种知识产物。"""
+  
+> from book_dismantler.rendering.base import ArtifactType, RenderedArtifact, Renderer
+  
+> __all__ = ["Renderer", "RenderedArtifact", "ArtifactType"]

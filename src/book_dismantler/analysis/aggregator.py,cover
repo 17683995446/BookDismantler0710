@@ -1,0 +1,166 @@
+> """知识模型聚合器：跨 chunk 合并分析结果。
+  
+> 负责概念去重、关系合并、大纲层级构建、冲突消解。
+> """
+  
+> from __future__ import annotations
+  
+> from book_dismantler.core.logging import get_logger
+> from book_dismantler.domain.knowledge import (
+>     Concept,
+>     ConceptAnatomy,
+>     ConceptImportance,
+>     KnowledgeModel,
+>     OutlineNode,
+>     Relationship,
+> )
+  
+> logger = get_logger("analysis.aggregator")
+  
+  
+> class Aggregator:
+>     """知识模型聚合器。
+  
+>     将多个 chunk 的部分 KnowledgeModel 合并为统一的整体模型。
+>     """
+  
+>     def __init__(self, book_title: str = "", book_author: str = "") -> None:
+>         self.book_title = book_title
+>         self.book_author = book_author
+  
+>     def aggregate(self, partials: list[KnowledgeModel]) -> KnowledgeModel:
+>         """聚合多个部分知识模型。
+  
+>         Args:
+>             partials: 各 chunk 的分析结果列表。
+  
+>         Returns:
+>             合并后的完整 KnowledgeModel。
+>         """
+>         if not partials:
+!             return KnowledgeModel(book_title=self.book_title, book_author=self.book_author)
+  
+          # 合并概念（去重）
+>         concepts = self._merge_concepts(
+>             [c for p in partials for c in p.concepts]
+>         )
+  
+          # 合并关系（去重）
+>         relationships = self._merge_relationships(
+>             [r for p in partials for r in p.relationships]
+>         )
+  
+          # 合并大纲（按章节顺序拼接）
+>         outline = self._merge_outline(
+>             [node for p in partials for node in p.outline]
+>         )
+  
+          # 合并解剖（去重，保留最详细的）
+>         anatomies = self._merge_anatomies(
+>             [a for p in partials for a in p.anatomies]
+>         )
+  
+          # 汇总
+>         summaries = [p.summary for p in partials if p.summary]
+  
+>         result = KnowledgeModel(
+>             book_title=self.book_title or partials[0].book_title,
+>             book_author=self.book_author or partials[0].book_author,
+>             outline=outline,
+>             concepts=concepts,
+>             relationships=relationships,
+>             anatomies=anatomies,
+>             summary=" ".join(summaries) if summaries else "",
+>             metadata={
+>                 "chunk_count": len(partials),
+>                 "total_concepts_raw": sum(len(p.concepts) for p in partials),
+>                 "total_relationships_raw": sum(len(p.relationships) for p in partials),
+>             },
+>         )
+  
+>         logger.info(
+>             "聚合完成: %d 概念(去重后), %d 关系, %d 大纲节点, %d 解剖",
+>             len(concepts),
+>             len(relationships),
+>             result.outline_node_count,
+>             len(anatomies),
+>         )
+>         return result
+  
+>     def _merge_concepts(self, concepts: list[Concept]) -> list[Concept]:
+>         """合并概念列表，去重并提升重要度。"""
+>         seen: dict[str, Concept] = {}
+  
+>         for concept in concepts:
+>             key = concept.key
+>             if key in seen:
+                  # 合并：提升重要度、补充定义和示例
+!                 existing = seen[key]
+!                 seen[key] = self._merge_concept(existing, concept)
+>             else:
+>                 seen[key] = concept
+  
+>         return list(seen.values())
+  
+>     def _merge_concept(self, a: Concept, b: Concept) -> Concept:
+>         """合并两个同名概念，取更丰富的信息。"""
+          # 重要度取较高的
+!         importance = a.importance
+!         if b.importance == ConceptImportance.HIGH:
+!             importance = ConceptImportance.HIGH
+!         elif (
+!             a.importance == ConceptImportance.LOW
+!             and b.importance == ConceptImportance.MEDIUM
+!         ):
+!             importance = ConceptImportance.MEDIUM
+  
+          # 定义取更长的
+!         definition = a.definition if len(a.definition) >= len(b.definition) else b.definition
+  
+          # 示例取并集
+!         examples = list(dict.fromkeys(a.examples + b.examples))
+  
+!         return Concept(
+!             name=a.name,
+!             definition=definition,
+!             type=a.type or b.type,
+!             examples=examples,
+!             importance=importance,
+!             source_chapter=a.source_chapter or b.source_chapter,
+!             source_chunk=a.source_chunk,
+!         )
+  
+>     def _merge_relationships(self, relationships: list[Relationship]) -> list[Relationship]:
+>         """合并关系列表，去重。"""
+>         seen: set[str] = set()
+>         result: list[Relationship] = []
+  
+>         for rel in relationships:
+!             if rel.key not in seen:
+!                 seen.add(rel.key)
+!                 result.append(rel)
+  
+>         return result
+  
+>     def _merge_outline(self, nodes: list[OutlineNode]) -> list[OutlineNode]:
+>         """合并大纲节点，按顺序拼接顶层节点。"""
+          # 简单策略：保留所有顶层节点，按出现顺序
+>         return nodes
+  
+>     def _merge_anatomies(
+>         self, anatomies: list[ConceptAnatomy]
+>     ) -> list[ConceptAnatomy]:
+>         """合并概念解剖，按概念名去重，保留特征最多的。"""
+>         seen: dict[str, ConceptAnatomy] = {}
+  
+>         for anatomy in anatomies:
+!             key = anatomy.concept.strip().lower()
+!             if key in seen:
+!                 existing = seen[key]
+                  # 保留特征更多的
+!                 if len(anatomy.characteristics) > len(existing.characteristics):
+!                     seen[key] = anatomy
+!             else:
+!                 seen[key] = anatomy
+  
+>         return list(seen.values())

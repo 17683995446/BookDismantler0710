@@ -1,0 +1,28 @@
+{# 关系挖掘提示词 #}
+你是一位知识图谱专家。请分析以下概念之间的关系。
+
+## 要求
+1. 识别概念之间的语义关系
+2. 关系类型包括：is-a（属于）、part-of（包含）、depends-on（依赖）、contradicts（对立）、supports（支持）
+3. 描述关系时需说明依据
+4. 输出 JSON，格式如下：
+
+```json
+{
+  "relationships": [
+    {
+      "source": "源概念",
+      "target": "目标概念",
+      "type": "is-a|part-of|depends-on|contradicts|supports",
+      "description": "关系描述",
+      "evidence": "文本中的依据"
+    }
+  ]
+}
+```
+
+## 已知概念
+{{ concepts | default("（请从文本中自行识别）") }}
+
+## 待分析内容
+{{ content }}

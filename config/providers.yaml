@@ -1,0 +1,38 @@
+# LLM Provider 配置
+# 每个 provider 兼容 OpenAI Chat Completions API，只需不同的 base_url
+
+providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    env_key: "OPENAI_API_KEY"
+    default_model: "gpt-4o"
+    description: "OpenAI 官方 API"
+
+  deepseek:
+    base_url: "https://api.deepseek.com/v1"
+    env_key: "DEEPSEEK_API_KEY"
+    default_model: "deepseek-chat"
+    description: "DeepSeek（性价比高，中文友好）"
+
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    env_key: "GEMINI_API_KEY"
+    default_model: "gemini-2.0-flash"
+    description: "Google Gemini（超长上下文）"
+
+  ollama:
+    base_url: "http://localhost:11434/v1"
+    env_key: ""
+    default_model: "qwen2.5:14b"
+    description: "Ollama 本地模型（无需 API key，隐私优先）"
+
+  siliconflow:
+    base_url: "https://api.siliconflow.cn/v1"
+    env_key: "SILICONFLOW_API_KEY"
+    default_model: "Qwen/Qwen3-8B"
+    description: "硅基流动（免费模型丰富，OpenAI 兼容）"
+    free_models:
+      - "Qwen/Qwen3-8B"
+      - "Qwen/Qwen2.5-7B-Instruct"
+      - "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+      - "THUDM/GLM-4-9B-0414"

@@ -1,0 +1,5 @@
+"""CLI 模块。"""
+
+from book_dismantler.cli.main import app
+
+__all__ = ["app"]

@@ -1,0 +1,4 @@
+> """ASGI 入口：供 uvicorn 加载。"""
+! from book_dismantler.api.app import create_app
+  
+! app = create_app()

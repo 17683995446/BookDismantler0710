@@ -1,0 +1,141 @@
+"""消息构建与结构化输出解析工具。"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, cast
+
+from book_dismantler.core.exceptions import LLMError
+from book_dismantler.core.logging import get_logger
+from book_dismantler.llm.base import Message
+
+logger = get_logger("llm.messages")
+
+
+def build_messages(
+    system_prompt: str,
+    user_content: str,
+    *,
+    context: str | None = None,
+) -> list[Message]:
+    """构建消息列表。
+
+    Args:
+        system_prompt: 系统提示词。
+        user_content: 用户输入内容。
+        context: 可选上下文（如书籍片段），插入到 user 消息前。
+
+    Returns:
+        消息列表（system + 可选 context + user）。
+    """
+    messages = [Message(role="system", content=system_prompt)]
+
+    if context:
+        full_content = f"以下是待分析的内容：\n\n{context}\n\n{user_content}"
+    else:
+        full_content = user_content
+
+    messages.append(Message(role="user", content=full_content))
+    return messages
+
+
+def parse_json_response(raw: str) -> dict[str, Any]:
+    """从 LLM 响应中提取 JSON。
+
+    处理以下情况：
+        - 纯 JSON 字符串
+        - 包裹在 ```json ... ``` 代码块中
+        - 前后有多余文本
+
+    Args:
+        raw: LLM 原始响应文本。
+
+    Returns:
+        解析后的 dict。
+
+    Raises:
+        LLMError: JSON 解析失败。
+    """
+    text = raw.strip()
+
+    # 尝试直接解析
+    try:
+        return cast(dict[str, Any], json.loads(text))
+    except json.JSONDecodeError:
+        pass
+
+    # 尝试从 ```json ... ``` 代码块提取
+    pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
+    matches = re.findall(pattern, text, re.DOTALL)
+    for match in matches:
+        try:
+            return cast(dict[str, Any], json.loads(match.strip()))
+        except json.JSONDecodeError:
+            continue
+
+    # 尝试找到第一个 { 和最后一个 } 之间的内容
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        try:
+            return cast(dict[str, Any], json.loads(text[first_brace : last_brace + 1]))
+        except json.JSONDecodeError:
+            pass
+
+    raise LLMError(f"无法从响应中解析 JSON: {raw[:200]}...")
+
+
+def wrap_schema_instruction(prompt: str, schema: dict[str, Any]) -> str:
+    """在提示词中追加 JSON schema 约束说明。
+
+    Args:
+        prompt: 原始提示词。
+        schema: 期望输出的 JSON Schema。
+
+    Returns:
+        追加了结构化输出要求的提示词。
+    """
+    example = _build_json_example(schema)
+    return (
+        f"{prompt}\n\n"
+        f"请只输出JSON，不要包含任何其他文本。JSON格式如下：\n"
+        f"{example}"
+    )
+
+
+def _build_json_example(schema: dict[str, Any], indent: int = 0) -> str:
+    """从 JSON Schema 生成合法的 JSON 示例（含逗号）。"""
+    if not isinstance(schema, dict):
+        return '"..."'
+
+    schema_type = schema.get("type", "object")
+    props = schema.get("properties", {})
+    pad = "  " * indent
+
+    if schema_type == "object" and props:
+        items = []
+        for key, val in props.items():
+            val_type = val.get("type", "string")
+            if val_type == "array":
+                item_schema = val.get("items", {})
+                item_example = _build_json_example(item_schema, indent + 2)
+                items.append(f'{pad}  "{key}": [{item_example}]')
+            elif val_type == "object":
+                inner = _build_json_example(val, indent + 2)
+                items.append(f'{pad}  "{key}": {inner}')
+            elif val_type == "integer":
+                items.append(f'{pad}  "{key}": 0')
+            elif val_type == "boolean":
+                items.append(f'{pad}  "{key}": false')
+            else:
+                items.append(f'{pad}  "{key}": "..."')
+        body = ",\n".join(items)
+        return f"{{\n{body}\n{pad}}}"
+
+    if schema_type == "array":
+        item_schema = schema.get("items", {})
+        item_example = _build_json_example(item_schema, indent + 1)
+        return f"[{item_example}]"
+
+    return '"..."'

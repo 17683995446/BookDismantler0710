@@ -1,0 +1,65 @@
+> """设置路由：查看和更新 Provider 配置。"""
+  
+> from __future__ import annotations
+  
+> from typing import Any
+  
+> from fastapi import APIRouter
+  
+> from book_dismantler.api.schemas import SettingsResponse, UpdateSettingsRequest
+> from book_dismantler.core.config import get_settings
+  
+> router = APIRouter()
+  
+  
+> @router.get("/", response_model=SettingsResponse)
+> async def get_settings_info() -> SettingsResponse:
+>     """获取当前 Provider 设置（API Key 脱敏）。"""
+!     settings = get_settings()
+  
+!     providers = {}
+!     for name in ["openai", "deepseek", "gemini", "ollama", "siliconflow"]:
+!         api_key = getattr(settings, f"{name}_api_key", "")
+!         base_url = getattr(settings, f"{name}_base_url", "")
+          # 脱敏：只显示前 8 位 + 后 4 位
+!         if api_key and len(api_key) > 12:
+!             masked = api_key[:8] + "..." + api_key[-4:]
+!         elif api_key:
+!             masked = "***"
+!         else:
+!             masked = ""
+  
+!         providers[name] = {
+!             "base_url": base_url,
+!             "api_key": masked,
+!             "configured": bool(api_key),
+!         }
+  
+!     return SettingsResponse(
+!         default_provider=settings.default_provider,
+!         default_model=settings.default_model,
+!         providers=providers,
+!     )
+  
+  
+> @router.put("/")
+> async def update_settings(request: UpdateSettingsRequest) -> dict[str, Any]:
+>     """更新 Provider 设置（运行时生效，不持久化到 .env）。"""
+!     from book_dismantler.core.config import get_settings
+  
+!     settings = get_settings()
+  
+!     if request.provider:
+!         settings.default_provider = request.provider
+!     if request.model:
+!         settings.default_model = request.model
+!     if request.api_key and request.provider:
+!         key_field = f"{request.provider}_api_key"
+!         if hasattr(settings, key_field):
+!             setattr(settings, key_field, request.api_key)
+  
+!     return {
+!         "message": "设置已更新",
+!         "default_provider": settings.default_provider,
+!         "default_model": settings.default_model,
+!     }

@@ -1,0 +1,6 @@
+> """笔记渲染器：Markdown 与 org-mode。"""
+  
+> from book_dismantler.rendering.notes.markdown import MarkdownRenderer
+> from book_dismantler.rendering.notes.orgmode import OrgModeRenderer
+  
+> __all__ = ["MarkdownRenderer", "OrgModeRenderer"]

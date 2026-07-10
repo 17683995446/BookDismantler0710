@@ -1,0 +1,76 @@
+> """API 请求/响应模型。"""
+  
+> from __future__ import annotations
+  
+> from datetime import datetime
+> from typing import Any
+  
+> from pydantic import BaseModel, Field
+  
+  
+> class BookUploadResponse(BaseModel):
+>     """上传响应。"""
+  
+>     book_id: str = Field(..., description="书籍 ID")
+>     filename: str = Field(..., description="文件名")
+>     size: int = Field(..., description="文件大小（字节）")
+  
+  
+> class JobCreateRequest(BaseModel):
+>     """创建拆书任务请求。"""
+  
+>     book_id: str = Field(..., description="书籍 ID")
+>     provider: str | None = Field(default=None, description="LLM provider")
+>     model: str | None = Field(default=None, description="模型名")
+  
+  
+> class JobStatusResponse(BaseModel):
+>     """任务状态响应。"""
+  
+>     job_id: str
+>     status: str
+>     book_title: str = ""
+>     book_filename: str = ""
+>     provider: str = ""
+>     model: str = ""
+>     output_dir: str = ""
+>     artifact_count: int = 0
+>     error: str = ""
+>     progress: int = 0
+>     current_step: str = ""
+>     started_at: datetime | None = None
+>     finished_at: datetime | None = None
+>     duration_seconds: float | None = None
+>     stats: dict[str, Any] = Field(default_factory=dict)
+  
+  
+> class ArtifactInfo(BaseModel):
+>     """产物信息。"""
+  
+>     filename: str
+>     artifact_type: str
+>     title: str = ""
+>     size: int = 0
+  
+  
+> class ArtifactListResponse(BaseModel):
+>     """产物列表响应。"""
+  
+>     job_id: str
+>     artifacts: list[ArtifactInfo] = Field(default_factory=list)
+  
+  
+> class SettingsResponse(BaseModel):
+>     """设置响应。"""
+  
+>     default_provider: str = ""
+>     default_model: str = ""
+>     providers: dict[str, Any] = Field(default_factory=dict)
+  
+  
+> class UpdateSettingsRequest(BaseModel):
+>     """更新设置请求。"""
+  
+>     provider: str | None = None
+>     api_key: str | None = None
+>     model: str | None = None

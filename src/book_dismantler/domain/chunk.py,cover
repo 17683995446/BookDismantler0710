@@ -1,0 +1,41 @@
+> """文本分块模型。
+  
+> 分块器将 ``ParsedDocument`` 拆分为 ``TextChunk`` 列表，
+> 供 LLM 分析策略逐块处理。每个 chunk 携带来源定位，便于产物回链原文。
+> """
+  
+> from __future__ import annotations
+  
+> from pydantic import BaseModel, Field, model_validator
+  
+  
+> class TextChunk(BaseModel):
+>     """文本块：LLM 分析的最小输入单元。"""
+  
+>     text: str = Field(..., min_length=1, description="块文本内容")
+>     chapter_index: int = Field(..., ge=0, description="所属章节序号")
+>     chapter_title: str = Field(default="", description="所属章节标题")
+>     section_index: int | None = Field(default=None, ge=0, description="所属小节序号")
+>     chunk_index: int = Field(..., ge=0, description="全局块序号")
+>     token_estimate: int = Field(default=0, ge=0, description="token 数估算")
+>     char_count: int = Field(default=0, ge=0, description="字符数")
+  
+>     model_config = {"frozen": True}
+  
+>     @model_validator(mode="after")
+>     def _fill_char_count(self) -> TextChunk:
+>         """自动填充字符数（若未指定）。"""
+>         if self.char_count == 0:
+>             object.__setattr__(self, "char_count", len(self.text))
+>         return self
+  
+>     @property
+>     def location_label(self) -> str:
+>         """人类可读的来源定位标签。"""
+>         parts: list[str] = [f"第{self.chapter_index + 1}章"]
+>         if self.chapter_title:
+>             parts[0] = f"{parts[0]} {self.chapter_title}"
+>         if self.section_index is not None:
+>             parts.append(f"第{self.section_index + 1}节")
+>         parts.append(f"块#{self.chunk_index}")
+>         return " · ".join(parts)

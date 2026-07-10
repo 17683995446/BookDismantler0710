@@ -1,0 +1,81 @@
+> """结构大纲抽取策略。"""
+  
+> from __future__ import annotations
+  
+> from typing import Any
+  
+> from book_dismantler.analysis.strategies import AnalysisStrategy
+> from book_dismantler.core.logging import get_logger
+> from book_dismantler.domain.chunk import TextChunk
+> from book_dismantler.domain.knowledge import KnowledgeModel, OutlineNode
+  
+> logger = get_logger("analysis.outline")
+  
+  
+> class OutlineStrategy(AnalysisStrategy):
+>     """结构大纲抽取策略。"""
+  
+>     @property
+>     def name(self) -> str:
+>         return "outline"
+  
+>     @property
+>     def prompt_template(self) -> str:
+>         return "outline_extraction.j2"
+  
+>     @property
+>     def response_schema(self) -> dict[str, Any]:
+>         return {
+>             "type": "object",
+>             "properties": {
+>                 "nodes": {
+>                     "type": "array",
+>                     "items": {
+>                         "type": "object",
+>                         "properties": {
+>                             "title": {"type": "string"},
+>                             "summary": {"type": "string"},
+>                             "level": {"type": "integer"},
+>                         },
+>                     },
+>                 }
+>             },
+>             "required": ["nodes"],
+>         }
+  
+>     def analyze(self, chunk: TextChunk) -> KnowledgeModel:
+>         """抽取文本块的结构大纲。"""
+>         prompt = self._render_prompt(
+>             book_title=self.book_title,
+>             chapter_title=chunk.chapter_title,
+>             content=chunk.text,
+>         )
+  
+>         data = self._call_llm(prompt)
+  
+>         if not data or "nodes" not in data:
+>             logger.warning("大纲抽取未返回有效数据: chunk #%d", chunk.chunk_index)
+>             return KnowledgeModel(book_title=self.book_title)
+  
+>         nodes = self._parse_nodes(data["nodes"])
+>         return KnowledgeModel(
+>             book_title=self.book_title,
+>             outline=nodes,
+>         )
+  
+>     def _parse_nodes(self, raw_nodes: list[dict[str, Any]]) -> list[OutlineNode]:
+>         """将原始 dict 列表解析为 OutlineNode。"""
+>         result: list[OutlineNode] = []
+>         for node_data in raw_nodes:
+>             try:
+>                 children = self._parse_nodes(node_data.get("children", []))
+>                 node = OutlineNode(
+>                     title=node_data.get("title", ""),
+>                     summary=node_data.get("summary", ""),
+>                     level=node_data.get("level", 1),
+>                     children=children,
+>                 )
+>                 result.append(node)
+!             except Exception as e:
+!                 logger.warning("节点解析失败: %s", e)
+>         return result

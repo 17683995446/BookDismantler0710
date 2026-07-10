@@ -1,0 +1,31 @@
+> """解析器抽象接口。
+  
+> 所有具体解析器（PDF/EPUB/TXT）实现此 Protocol，
+> 由 registry 按文件类型分发。
+> """
+  
+> from __future__ import annotations
+  
+> from pathlib import Path
+> from typing import Protocol, runtime_checkable
+  
+> from book_dismantler.domain.document import ParsedDocument
+  
+  
+> @runtime_checkable
+> class Parser(Protocol):
+>     """文档解析器协议。"""
+  
+>     def parse(self, path: str | Path) -> ParsedDocument:
+>         """解析电子书文件。
+  
+>         Args:
+>             path: 文件路径。
+  
+>         Returns:
+>             统一的 ``ParsedDocument``。
+  
+>         Raises:
+>             ParseError: 解析失败。
+>         """
+-         ...

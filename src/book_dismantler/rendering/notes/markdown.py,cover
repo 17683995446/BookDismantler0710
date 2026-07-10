@@ -1,0 +1,147 @@
+> """Markdown 笔记渲染器。
+  
+> 将 KnowledgeModel 渲染为层级化的 Markdown 笔记，
+> 包含大纲、概念列表、关系网络、概念解剖和全书总结。
+> """
+  
+> from __future__ import annotations
+  
+> from book_dismantler.domain.knowledge import (
+>     Concept,
+>     ConceptAnatomy,
+>     KnowledgeModel,
+>     OutlineNode,
+> )
+> from book_dismantler.rendering.base import ArtifactType, RenderedArtifact, Renderer
+  
+  
+> class MarkdownRenderer(Renderer):
+>     """Markdown 结构化笔记渲染器。"""
+  
+>     @property
+>     def artifact_type(self) -> ArtifactType:
+>         return ArtifactType.MARKDOWN_NOTES
+  
+>     def render(self, model: KnowledgeModel) -> RenderedArtifact:
+>         """渲染知识模型为 Markdown 笔记。"""
+>         lines: list[str] = []
+  
+          # 标题
+>         title = model.book_title or "拆书笔记"
+>         lines.append(f"# {title}\n")
+>         if model.book_author:
+>             lines.append(f"> 作者：{model.book_author}\n")
+  
+          # 全书总结
+>         if model.summary:
+>             lines.append("## 全书总结\n")
+>             lines.append(f"{model.summary}\n")
+  
+          # 结构大纲
+>         if model.outline:
+>             lines.append("## 结构大纲\n")
+>             for node in model.outline:
+>                 lines.extend(self._render_outline_node(node))
+>             lines.append("")
+  
+          # 核心概念
+>         if model.concepts:
+>             lines.append("## 核心概念\n")
+>             for concept in model.concepts:
+>                 lines.extend(self._render_concept(concept))
+>             lines.append("")
+  
+          # 概念关系
+>         if model.relationships:
+>             lines.append("## 概念关系\n")
+>             lines.append("| 源概念 | 关系 | 目标概念 | 说明 |")
+>             lines.append("|--------|------|----------|------|")
+>             for rel in model.relationships:
+>                 lines.append(
+>                     f"| {rel.source} | {rel.type.value} | {rel.target} | {rel.description} |"
+>                 )
+>             lines.append("")
+  
+          # 概念解剖
+>         if model.anatomies:
+>             lines.append("## 概念深度解剖\n")
+>             for anatomy in model.anatomies:
+>                 lines.extend(self._render_anatomy(anatomy))
+>             lines.append("")
+  
+          # 统计信息
+>         lines.append("---\n")
+>         lines.append(
+>             f"*共 {model.concept_count} 个概念，"
+>             f"{model.relationship_count} 条关系，"
+>             f"{model.outline_node_count} 个大纲节点*\n"
+>         )
+  
+>         content = "\n".join(lines)
+>         return RenderedArtifact(
+>             artifact_type=self.artifact_type,
+>             content=content,
+>             title=title,
+>             metadata={
+>                 "concept_count": model.concept_count,
+>                 "relationship_count": model.relationship_count,
+>             },
+>         )
+  
+>     def _render_outline_node(self, node: OutlineNode, depth: int = 0) -> list[str]:
+>         """渲染大纲节点。"""
+>         lines: list[str] = []
+>         indent = "  " * depth
+>         prefix = "#" * min(depth + 3, 6)  # ### 到 ######
+>         lines.append(f"{prefix} {node.title}")
+>         if node.summary:
+>             lines.append(f"\n{indent}{node.summary}\n")
+>         for child in node.children:
+>             lines.extend(self._render_outline_node(child, depth + 1))
+>         return lines
+  
+>     def _render_concept(self, concept: Concept) -> list[str]:
+>         """渲染单个概念。"""
+>         lines: list[str] = []
+>         icon = concept.importance.icon
+>         lines.append(f"### {icon} {concept.name}")
+>         if concept.definition:
+>             lines.append(f"\n**定义**：{concept.definition}\n")
+>         if concept.type:
+>             lines.append(f"- **类型**：{concept.type}")
+>         if concept.examples:
+>             lines.append(f"- **示例**：{', '.join(concept.examples)}")
+>         if concept.source_chapter:
+>             lines.append(f"- **来源**：{concept.source_chapter}")
+>         lines.append("")
+>         return lines
+  
+>     def _render_anatomy(self, anatomy: ConceptAnatomy) -> list[str]:
+>         """渲染概念解剖。"""
+>         lines: list[str] = []
+>         lines.append(f"### 🔬 {anatomy.concept}\n")
+>         if anatomy.definition:
+>             lines.append(f"**定义**：{anatomy.definition}\n")
+>         if anatomy.characteristics:
+>             lines.append("**核心特征**：")
+>             for char in anatomy.characteristics:
+>                 lines.append(f"- {char}")
+>             lines.append("")
+>         if anatomy.comparisons:
+>             lines.append("**概念对比**：")
+>             for comp in anatomy.comparisons:
+>                 lines.append(f"- **{comp.concept}**：{comp.similarity}；{comp.difference}")
+>             lines.append("")
+>         if anatomy.applications:
+>             lines.append("**应用场景**：")
+>             for app in anatomy.applications:
+>                 lines.append(f"- {app}")
+>             lines.append("")
+>         if anatomy.counterexamples:
+>             lines.append("**反例**：")
+>             for ce in anatomy.counterexamples:
+>                 lines.append(f"- {ce}")
+>             lines.append("")
+>         if anatomy.insight:
+>             lines.append(f"> 💡 {anatomy.insight}\n")
+>         return lines

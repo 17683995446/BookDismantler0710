@@ -1,0 +1,139 @@
+> """产物管理路由：列表/下载/预览/知识模型。"""
+  
+> from __future__ import annotations
+  
+> import io
+> import json
+> import zipfile
+> from pathlib import Path
+> from typing import Any, cast
+  
+> from fastapi import APIRouter, HTTPException
+> from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response, StreamingResponse
+  
+> from book_dismantler.api.deps import get_output_base_dir
+  
+> router = APIRouter()
+  
+  
+> @router.get("/{job_id}/list")
+> async def list_artifacts(job_id: str) -> dict[str, Any]:
+>     """列出任务的所有产物。"""
+>     job_dir = _find_job_dir(job_id)
+>     if job_dir is None:
+>         raise HTTPException(status_code=404, detail="产物目录不存在")
+  
+>     manifest_path = job_dir / "manifest.json"
+>     if manifest_path.exists():
+>         manifest = cast(dict[str, Any], json.loads(manifest_path.read_text(encoding="utf-8")))
+>         return manifest
+  
+      # 回退：扫描目录
+!     artifacts = []
+!     for f in job_dir.iterdir():
+!         if f.is_file() and f.name != "manifest.json":
+!             artifacts.append({
+!                 "filename": f.name,
+!                 "size": f.stat().st_size,
+!             })
+!     return {"artifacts": artifacts, "job_id": job_id}
+  
+  
+> @router.get("/{job_id}/knowledge")
+> async def get_knowledge_model(job_id: str) -> dict[str, Any]:
+>     """获取任务的知识模型 JSON。"""
+!     job_dir = _find_job_dir(job_id)
+!     if job_dir is None:
+!         raise HTTPException(status_code=404, detail="产物目录不存在")
+  
+!     km_path = job_dir / "knowledge_model.json"
+!     if not km_path.exists():
+!         raise HTTPException(status_code=404, detail="知识模型不存在")
+  
+!     return cast(dict[str, Any], json.loads(km_path.read_text(encoding="utf-8")))
+  
+  
+> def _validate_filename(filename: str) -> None:
+>     """验证文件名，防止路径穿越攻击。"""
+>     if ".." in filename or "/" in filename or "\\" in filename:
+!         raise HTTPException(status_code=400, detail="非法文件名")
+  
+  
+> @router.get("/{job_id}/download-all")
+> async def download_all_artifacts(job_id: str) -> StreamingResponse:
+>     """将任务所有产物打包为 ZIP 下载。"""
+!     job_dir = _find_job_dir(job_id)
+!     if job_dir is None:
+!         raise HTTPException(status_code=404, detail="产物目录不存在")
+  
+!     buf = io.BytesIO()
+!     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+!         for f in job_dir.iterdir():
+!             if f.is_file():
+!                 zf.write(f, f.name)
+  
+!     buf.seek(0)
+!     return StreamingResponse(
+!         buf,
+!         media_type="application/zip",
+!         headers={"Content-Disposition": f'attachment; filename="{job_id}-artifacts.zip"'},
+!     )
+  
+  
+> @router.get("/{job_id}/{filename}")
+> async def download_artifact(job_id: str, filename: str) -> FileResponse:
+>     """下载指定产物文件。"""
+>     _validate_filename(filename)
+  
+>     job_dir = _find_job_dir(job_id)
+>     if job_dir is None:
+!         raise HTTPException(status_code=404, detail="产物目录不存在")
+  
+>     file_path = job_dir / filename
+>     if not file_path.exists() or not file_path.is_file():
+>         raise HTTPException(status_code=404, detail="文件不存在")
+  
+>     return FileResponse(str(file_path), filename=filename)
+  
+  
+> @router.get("/{job_id}/preview/{filename}")
+> async def preview_artifact(job_id: str, filename: str) -> Response:
+>     """预览产物（HTML 直接渲染，Markdown/JSON 返回纯文本）。"""
+>     _validate_filename(filename)
+  
+>     job_dir = _find_job_dir(job_id)
+>     if job_dir is None:
+!         raise HTTPException(status_code=404, detail="产物目录不存在")
+  
+>     file_path = job_dir / filename
+>     if not file_path.exists():
+!         raise HTTPException(status_code=404, detail="文件不存在")
+  
+>     content = file_path.read_text(encoding="utf-8")
+  
+>     if filename.endswith(".html"):
+>         return HTMLResponse(content=content)
+>     return PlainTextResponse(content=content)
+  
+  
+> def _find_job_dir(job_id: str) -> Path | None:
+>     """查找任务输出目录。
+  
+>     优先从 JobStore 查找 output_dir，其次扫描目录名匹配。
+>     """
+      # 优先从 JobStore 查找
+>     from book_dismantler.api.routers.jobs import get_job_store
+  
+>     job = get_job_store().get(job_id)
+>     if job and job.output_dir:
+!         p = Path(job.output_dir)
+!         if p.exists() and p.is_dir():
+!             return p
+  
+      # 回退：扫描 output 目录
+>     base_dir = get_output_base_dir()
+>     for d in base_dir.iterdir():
+>         if d.is_dir() and (d.name == job_id or job_id in d.name):
+>             return d
+  
+>     return None

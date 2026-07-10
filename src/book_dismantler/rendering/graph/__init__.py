@@ -1,0 +1,5 @@
+"""知识图谱渲染器。"""
+
+from book_dismantler.rendering.graph.graph_renderer import KnowledgeGraphRenderer
+
+__all__ = ["KnowledgeGraphRenderer"]

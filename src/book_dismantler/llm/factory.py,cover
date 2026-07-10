@@ -1,0 +1,59 @@
+> """LLM 客户端工厂：从配置构造 provider 实例。"""
+  
+> from __future__ import annotations
+  
+> from book_dismantler.core.config import Settings, get_settings
+> from book_dismantler.core.exceptions import ConfigError
+> from book_dismantler.core.logging import get_logger
+> from book_dismantler.llm.base import LLMClient
+> from book_dismantler.llm.providers.openai_provider import OpenAICompatibleProvider
+  
+> logger = get_logger("llm.factory")
+  
+  
+> def create_client(
+>     provider: str | None = None,
+>     model: str | None = None,
+>     settings: Settings | None = None,
+> ) -> LLMClient:
+>     """根据配置创建 LLM 客户端。
+  
+>     Args:
+>         provider: provider 名称（openai/deepseek/gemini/ollama/siliconflow），
+>             为 None 时使用 settings.default_provider。
+>         model: 模型名，为 None 时使用 settings.default_model。
+>         settings: 配置对象，为 None 时使用全局单例。
+  
+>     Returns:
+>         ``LLMClient`` 实例。
+  
+>     Raises:
+>         ConfigError: 配置缺失或非法。
+>     """
+>     settings = settings or get_settings()
+>     provider_name = provider or settings.default_provider
+>     model_name = model or settings.default_model
+  
+>     logger.info("创建 LLM 客户端: provider=%s, model=%s", provider_name, model_name)
+  
+>     try:
+>         config = settings.get_provider_config(provider_name)
+>     except ValueError as e:
+>         raise ConfigError(str(e)) from e
+  
+>     api_key = config["api_key"]
+>     base_url = config["base_url"]
+  
+>     if not api_key and provider_name != "ollama":
+>         raise ConfigError(
+>             f"provider '{provider_name}' 缺少 API key，"
+>             f"请设置环境变量 {provider_name.upper()}_API_KEY"
+>         )
+  
+>     return OpenAICompatibleProvider(
+>         api_key=api_key,
+>         base_url=base_url,
+>         model=model_name,
+>         timeout=settings.llm_timeout,
+>         max_retries=settings.llm_max_retries,
+>     )
